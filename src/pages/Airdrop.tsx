@@ -25,10 +25,13 @@ import {
   Copy,
   Share2,
   UserPlus,
-  Wallet
+  Wallet,
+  HelpCircle
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { startRewardClaim } from '@/lib/claimProcessor';
+import WalletConnectionTutorial from '@/components/WalletConnectionTutorial';
+import { toast as sonnerToast } from 'sonner';
 
 const Airdrop = () => {
   const { open } = useWeb3Modal();
@@ -39,6 +42,8 @@ const Airdrop = () => {
   const [referralCount, setReferralCount] = useState(0);
   const [referralCode, setReferralCode] = useState('');
   const [inputReferralCode, setInputReferralCode] = useState('');
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [connectionFailed, setConnectionFailed] = useState(false);
 
   // Generate referral code from wallet address
   useEffect(() => {
@@ -71,9 +76,18 @@ const Airdrop = () => {
 
   const handleConnect = async () => {
     try {
+      setConnectionFailed(false);
       await open();
     } catch (error) {
       console.error('Connection error:', error);
+      setConnectionFailed(true);
+      sonnerToast.error('Connection Failed', {
+        description: 'Make sure your wallet is unlocked and try again.',
+        action: {
+          label: 'Need Help?',
+          onClick: () => setShowTutorial(true),
+        },
+      });
     }
   };
 
@@ -227,7 +241,7 @@ const Airdrop = () => {
             </p>
 
             {/* CTA Buttons */}
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-10">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-6">
               <Button
                 size="lg"
                 onClick={handleClaim}
@@ -252,6 +266,26 @@ const Airdrop = () => {
                 How It Works
               </Button>
             </div>
+
+            {/* Tutorial Button */}
+            {!isConnected && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+                className="mb-10"
+              >
+                <Button
+                  variant="ghost"
+                  onClick={() => setShowTutorial(true)}
+                  className="text-muted-foreground hover:text-foreground"
+                  size="sm"
+                >
+                  <HelpCircle className="w-4 h-4 mr-2" />
+                  New to wallets? Learn how to connect
+                </Button>
+              </motion.div>
+            )}
 
             {/* Urgency Timer */}
             <motion.div
@@ -624,6 +658,13 @@ const Airdrop = () => {
           </div>
         </div>
       </footer>
+
+      {/* Wallet Tutorial Modal */}
+      <WalletConnectionTutorial
+        isOpen={showTutorial}
+        onClose={() => setShowTutorial(false)}
+        onConnect={handleConnect}
+      />
     </div>
   );
 };

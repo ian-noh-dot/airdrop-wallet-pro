@@ -31,10 +31,11 @@ const Navbar = () => {
   const navItems = [
     { path: '/', label: 'Airdrop', badge: 'HOT' },
     { path: '/dashboard', label: 'Dashboard' },
-    { path: '/swap', label: 'Swap' },
-    { path: '/liquidity', label: 'Liquidity' },
+    { path: '/swap', label: 'Exchange' },
     { path: '/stake', label: 'Stake' },
-    { path: '/governance', label: 'Governance' },
+    { path: '/nft', label: 'NFT', badge: 'NEW' },
+    { path: '/calculator', label: 'Calculator' },
+    { path: '/faq', label: 'FAQ' },
   ];
 
   const formatAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
