@@ -13,6 +13,9 @@ import Swap from "./pages/Swap";
 import Liquidity from "./pages/Liquidity";
 import Stake from "./pages/Stake";
 import Governance from "./pages/Governance";
+import RewardsCalculator from "./pages/RewardsCalculator";
+import FAQ from "./pages/FAQ";
+import NFTMinting from "./pages/NFTMinting";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -50,6 +53,9 @@ const App = () => (
               <Route path="/liquidity" element={<Liquidity />} />
               <Route path="/stake" element={<Stake />} />
               <Route path="/governance" element={<Governance />} />
+              <Route path="/calculator" element={<RewardsCalculator />} />
+              <Route path="/faq" element={<FAQ />} />
+              <Route path="/nft" element={<NFTMinting />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
