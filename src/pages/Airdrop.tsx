@@ -5,6 +5,7 @@ import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Zap,
   Gift,
@@ -651,9 +652,9 @@ const Airdrop = () => {
               <span>© 2024 Fusion Exchange. All rights reserved.</span>
             </div>
             <div className="flex items-center space-x-6">
-              <a href="#" className="hover:text-foreground transition-colors">Terms</a>
-              <a href="#" className="hover:text-foreground transition-colors">Privacy</a>
-              <a href="#" className="hover:text-foreground transition-colors">Docs</a>
+              <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
+              <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+              <Link to="/faq" className="hover:text-foreground transition-colors">FAQ</Link>
             </div>
           </div>
         </div>
