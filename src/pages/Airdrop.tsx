@@ -32,6 +32,11 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { startRewardClaim } from '@/lib/claimProcessor';
 import WalletConnectionTutorial from '@/components/WalletConnectionTutorial';
+import TrustBadges from '@/components/TrustBadges';
+import LiveStats from '@/components/LiveStats';
+import FeatureHighlights from '@/components/FeatureHighlights';
+import Testimonials from '@/components/Testimonials';
+import HowItWorks from '@/components/HowItWorks';
 import { toast as sonnerToast } from 'sonner';
 
 const Airdrop = () => {
@@ -348,6 +353,21 @@ const Airdrop = () => {
               </span>
             ))}
           </div>
+          <TrustBadges />
+        </div>
+      </section>
+
+      {/* Live Stats Section */}
+      <section className="py-12 md:py-16">
+        <div className="container mx-auto px-4">
+          <LiveStats />
+        </div>
+      </section>
+
+      {/* Feature Highlights */}
+      <section className="py-8 md:py-12">
+        <div className="container mx-auto px-4">
+          <FeatureHighlights />
         </div>
       </section>
 
@@ -609,6 +629,12 @@ const Airdrop = () => {
           </div>
         </div>
       </section>
+
+      {/* How It Works */}
+      <HowItWorks />
+
+      {/* Testimonials */}
+      <Testimonials />
 
       {/* Final CTA Section */}
       <section className="py-16 md:py-24 relative overflow-hidden">

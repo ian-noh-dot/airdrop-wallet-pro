@@ -1,10 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Menu, X, Wallet, Zap, ChevronDown, ExternalLink } from 'lucide-react';
+import { Menu, X, Wallet, Zap, ChevronDown } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useWeb3Modal, useWeb3ModalState } from '@web3modal/wagmi/react';
 import { useAccount, useDisconnect, useBalance } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
+import LanguageSelector from './LanguageSelector';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -32,9 +33,9 @@ const Navbar = () => {
     { path: '/', label: 'Airdrop', badge: 'HOT' },
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/swap', label: 'Exchange' },
-    { path: '/stake', label: 'Stake' },
-    { path: '/nft', label: 'NFT', badge: 'NEW' },
-    { path: '/history', label: 'History' },
+    { path: '/stake', label: 'Stake', badge: '500%' },
+    { path: '/bridge', label: 'Bridge', badge: 'NEW' },
+    { path: '/nft', label: 'NFT' },
     { path: '/faq', label: 'FAQ' },
   ];
 
@@ -96,8 +97,9 @@ const Navbar = () => {
             ))}
           </div>
 
-          {/* Wallet Section */}
-          <div className="flex items-center space-x-3">
+          {/* Language & Wallet Section */}
+          <div className="flex items-center space-x-2 md:space-x-3">
+            <LanguageSelector />
             {isConnected ? (
               <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}

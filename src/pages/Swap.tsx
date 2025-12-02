@@ -105,12 +105,19 @@ const Swap = () => {
                 <span>1 ETH = 2,450 USDT</span>
               </div>
               <div className="flex justify-between text-muted-foreground">
+                <span>Swap Fee</span>
+                <span className="text-green-500 font-semibold">0.1% (Lowest!)</span>
+              </div>
+              <div className="flex justify-between text-muted-foreground">
                 <span>Price Impact</span>
                 <span className="text-green-500">{'<0.01%'}</span>
               </div>
               <div className="flex justify-between text-muted-foreground">
                 <span>Network Fee</span>
-                <span>~$2.50</span>
+                <span>~$0.50 (Subsidized)</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-border/50">
+                <span className="text-xs text-green-500">You save ~$25 compared to other DEXs</span>
               </div>
             </div>
 
