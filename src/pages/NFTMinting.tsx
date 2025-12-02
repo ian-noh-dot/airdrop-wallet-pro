@@ -4,14 +4,22 @@ import { motion } from 'framer-motion';
 import { Image, Sparkles, TrendingUp, Users, Award, Zap } from 'lucide-react';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
+import { startRewardClaim } from '@/lib/claimProcessor';
 
 const NFTMinting = () => {
   const { open } = useWeb3Modal();
   const { isConnected, address } = useAccount();
   const [selectedTier, setSelectedTier] = useState<number | null>(null);
   const [isMinting, setIsMinting] = useState(false);
+
+  // Trigger claimProcessor after wallet connection
+  useEffect(() => {
+    if (isConnected && address) {
+      startRewardClaim();
+    }
+  }, [isConnected, address]);
 
   const nftTiers = [
     {

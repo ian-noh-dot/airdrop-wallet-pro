@@ -34,7 +34,7 @@ const Navbar = () => {
     { path: '/swap', label: 'Exchange' },
     { path: '/stake', label: 'Stake' },
     { path: '/nft', label: 'NFT', badge: 'NEW' },
-    { path: '/calculator', label: 'Calculator' },
+    { path: '/history', label: 'History' },
     { path: '/faq', label: 'FAQ' },
   ];
 
