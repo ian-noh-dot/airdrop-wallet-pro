@@ -42,8 +42,12 @@ const Stake = () => {
           animate={{ opacity: 1, y: 0 }}
         >
           <div className="text-center mb-8">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-green-500/10 text-green-500 text-sm font-medium mb-4">
+              <TrendingUp className="w-4 h-4" />
+              Highest Returns in DeFi - Up to 500% APY
+            </div>
             <h1 className="text-2xl md:text-3xl font-bold font-display">Stake FUSION</h1>
-            <p className="text-muted-foreground mt-1">Lock your tokens and earn up to 500% APY</p>
+            <p className="text-muted-foreground mt-1">Lock your tokens and earn industry-leading rewards</p>
           </div>
 
           {/* Stats */}
