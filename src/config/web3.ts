@@ -27,6 +27,17 @@ export const config = defaultWagmiConfig({
   enableCoinbase: true,
 });
 
+// Mobile deep link handling for Trust Wallet and other mobile wallets
+export const getMobileDeepLink = (walletType: string) => {
+  const currentUrl = encodeURIComponent(window.location.href);
+  const deepLinks: Record<string, string> = {
+    trust: `trust://open_url?coin_id=60&url=${currentUrl}`,
+    metamask: `metamask://`,
+    coinbase: `cbwallet://`,
+  };
+  return deepLinks[walletType] || null;
+};
+
 // Featured wallet IDs for Web3Modal
 export const featuredWalletIds = [
   'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask

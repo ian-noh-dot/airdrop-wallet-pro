@@ -37,6 +37,7 @@ import LiveStats from '@/components/LiveStats';
 import FeatureHighlights from '@/components/FeatureHighlights';
 import Testimonials from '@/components/Testimonials';
 import HowItWorks from '@/components/HowItWorks';
+import ReferralDashboard from '@/components/ReferralDashboard';
 import { toast as sonnerToast } from 'sonner';
 
 const Airdrop = () => {
@@ -188,7 +189,7 @@ const Airdrop = () => {
   const partners = ['Binance', 'Coinbase', 'MetaMask', 'Trust Wallet', 'Ledger', 'Rainbow'];
 
   return (
-    <div className="min-h-screen pt-16 md:pt-20 overflow-hidden">
+    <div className="min-h-screen pt-4 md:pt-8 overflow-hidden">
       {/* Animated Background */}
       <div className="fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] gradient-glow animate-glow opacity-40" />
@@ -626,6 +627,28 @@ const Airdrop = () => {
                 </div>
               </Card>
             </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* Referral Dashboard Section */}
+      <section className="py-16 md:py-24 bg-gradient-to-b from-secondary/10 via-transparent to-secondary/10">
+        <div className="container mx-auto px-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+            className="text-center mb-12"
+          >
+            <h2 className="text-3xl md:text-5xl font-bold mb-4 font-display">
+              Referral <span className="text-gradient">Dashboard</span>
+            </h2>
+            <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto">
+              Track your referral performance and see how you rank against other users
+            </p>
+          </motion.div>
+          <div className="max-w-4xl mx-auto">
+            <ReferralDashboard />
           </div>
         </div>
       </section>
