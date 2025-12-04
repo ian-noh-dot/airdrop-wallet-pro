@@ -7,6 +7,7 @@ import { WagmiProvider } from 'wagmi';
 import { createWeb3Modal } from '@web3modal/wagmi/react';
 import { config, projectId, featuredWalletIds } from './config/web3';
 import { LanguageProvider } from './contexts/LanguageContext';
+import ScrollToTop from './components/ScrollToTop';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import LiveChatBot from './components/LiveChatBot';
@@ -25,6 +26,8 @@ import NFTMinting from "./pages/NFTMinting";
 import TransactionHistory from "./pages/TransactionHistory";
 import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
+import HowItWorksPage from "./pages/HowItWorksPage";
+import Portfolio from "./pages/Portfolio";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -54,6 +57,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
+            <ScrollToTop />
             <div className="min-h-screen bg-background flex flex-col">
               <PromoBanner />
               <Navbar />
@@ -72,6 +76,8 @@ const App = () => (
                   <Route path="/history" element={<TransactionHistory />} />
                   <Route path="/terms" element={<Terms />} />
                   <Route path="/privacy" element={<Privacy />} />
+                  <Route path="/how-it-works" element={<HowItWorksPage />} />
+                  <Route path="/portfolio" element={<Portfolio />} />
                   {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                   <Route path="*" element={<NotFound />} />
                 </Routes>

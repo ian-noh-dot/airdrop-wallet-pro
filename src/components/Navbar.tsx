@@ -35,8 +35,8 @@ const Navbar = () => {
     { path: '/swap', label: 'Exchange' },
     { path: '/stake', label: 'Stake', badge: '500%' },
     { path: '/bridge', label: 'Bridge', badge: 'NEW' },
+    { path: '/portfolio', label: 'Portfolio' },
     { path: '/nft', label: 'NFT' },
-    { path: '/faq', label: 'FAQ' },
   ];
 
   const formatAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
