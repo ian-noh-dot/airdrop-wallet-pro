@@ -268,10 +268,12 @@ const Airdrop = () => {
                 <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />
               </Button>
 
-              <Button size="lg" variant="outline" className="text-lg px-8 py-7 glass-effect w-full sm:w-auto">
-                <Globe className="w-5 h-5 mr-2" />
-                How It Works
-              </Button>
+              <Link to="/how-it-works">
+                <Button size="lg" variant="outline" className="text-lg px-8 py-7 glass-effect w-full sm:w-auto">
+                  <Globe className="w-5 h-5 mr-2" />
+                  How It Works
+                </Button>
+              </Link>
             </div>
 
             {/* Tutorial Button */}

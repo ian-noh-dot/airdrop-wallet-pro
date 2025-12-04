@@ -9,6 +9,7 @@ import {
   Shield,
   FileText
 } from 'lucide-react';
+import Newsletter from './Newsletter';
 
 const Footer = () => {
   const currentYear = new Date().getFullYear();
@@ -18,12 +19,13 @@ const Footer = () => {
       { name: 'Airdrop', href: '/' },
       { name: 'Swap', href: '/swap' },
       { name: 'Stake', href: '/stake' },
+      { name: 'Bridge', href: '/bridge' },
       { name: 'NFT Mint', href: '/nft' },
-      { name: 'Governance', href: '/governance' },
     ],
     resources: [
+      { name: 'How It Works', href: '/how-it-works' },
       { name: 'FAQ', href: '/faq' },
-      { name: 'Calculator', href: '/calculator' },
+      { name: 'Portfolio', href: '/portfolio' },
       { name: 'Transaction History', href: '/history' },
       { name: 'Dashboard', href: '/dashboard' },
     ],
@@ -110,13 +112,13 @@ const Footer = () => {
             </ul>
           </div>
 
-          {/* Legal */}
-          <div>
+          {/* Legal & Newsletter */}
+          <div className="col-span-2 md:col-span-1">
             <h4 className="font-semibold mb-4 flex items-center">
               <Shield className="w-4 h-4 mr-2 text-primary" />
               Legal
             </h4>
-            <ul className="space-y-2">
+            <ul className="space-y-2 mb-6">
               {links.legal.map((link) => (
                 <li key={link.name}>
                   <Link
@@ -128,7 +130,7 @@ const Footer = () => {
                 </li>
               ))}
             </ul>
-            <div className="mt-4">
+            <div className="mb-4">
               <a
                 href="mailto:support@fusionexchange.io"
                 className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center"
@@ -138,6 +140,11 @@ const Footer = () => {
               </a>
             </div>
           </div>
+        </div>
+
+        {/* Newsletter Section */}
+        <div className="mb-8">
+          <Newsletter />
         </div>
 
         {/* Bottom Bar */}
