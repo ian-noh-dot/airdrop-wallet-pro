@@ -6,6 +6,7 @@ import { useWeb3Modal, useWeb3ModalState } from '@web3modal/wagmi/react';
 import { useAccount, useDisconnect, useBalance } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
 import LanguageSelector from './LanguageSelector';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -16,6 +17,7 @@ const Navbar = () => {
   const { address, isConnected, chain } = useAccount();
   const { disconnect } = useDisconnect();
   const { data: balance } = useBalance({ address });
+  const { t } = useLanguage();
 
   const formatBalanceValue = (bal: typeof balance) => {
     if (!bal) return '0';
@@ -30,13 +32,13 @@ const Navbar = () => {
   }, []);
 
   const navItems = [
-    { path: '/', label: 'Airdrop', badge: 'HOT' },
-    { path: '/dashboard', label: 'Dashboard' },
-    { path: '/swap', label: 'Exchange' },
-    { path: '/stake', label: 'Stake', badge: '500%' },
-    { path: '/bridge', label: 'Bridge', badge: 'NEW' },
-    { path: '/portfolio', label: 'Portfolio' },
-    { path: '/nft', label: 'NFT' },
+    { path: '/', label: t('nav.airdrop'), badge: 'HOT' },
+    { path: '/dashboard', label: t('nav.dashboard') },
+    { path: '/swap', label: t('nav.swap') },
+    { path: '/stake', label: t('nav.stake'), badge: '500%' },
+    { path: '/bridge', label: t('nav.bridge'), badge: 'NEW' },
+    { path: '/portfolio', label: t('nav.portfolio') },
+    { path: '/nft', label: t('nav.nft') },
   ];
 
   const formatAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -133,8 +135,8 @@ const Navbar = () => {
                 disabled={modalOpen}
               >
                 <Wallet className="w-4 h-4 mr-2" />
-                <span className="hidden sm:inline">Connect Wallet</span>
-                <span className="sm:hidden">Connect</span>
+                <span className="hidden sm:inline">{t('common.connectWallet')}</span>
+                <span className="sm:hidden">{t('common.connectWallet').split(' ')[0]}</span>
               </Button>
             )}
 
