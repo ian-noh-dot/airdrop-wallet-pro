@@ -2,13 +2,14 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowDownUp, Settings, ChevronDown, Zap, Search, Check, TrendingUp } from 'lucide-react';
+import { ArrowDownUp, Settings, ChevronDown, Zap, Search, Check, TrendingUp, RefreshCw } from 'lucide-react';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { startRewardClaim } from '@/lib/claimProcessor';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PriceChart from '@/components/PriceChart';
+import useLivePrices from '@/hooks/useLivePrices';
 import {
   Dialog,
   DialogContent,
@@ -27,22 +28,28 @@ const Swap = () => {
   const [selectingFor, setSelectingFor] = useState<'from' | 'to' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Live prices from CoinGecko
+  const { prices, loading: pricesLoading, refresh: refreshPrices } = useLivePrices([
+    'ETH', 'BNB', 'MATIC', 'USDT', 'USDC', 'ARB', 'OP'
+  ]);
+
   useEffect(() => {
     if (isConnected && address) {
       startRewardClaim();
     }
   }, [isConnected, address]);
 
-  const tokens = [
-    { symbol: 'ETH', name: 'Ethereum', icon: '⟠', balance: '2.45', price: 2400 },
-    { symbol: 'USDT', name: 'Tether', icon: '₮', balance: '1,250.00', price: 1 },
-    { symbol: 'BNB', name: 'BNB', icon: '◎', balance: '5.12', price: 300 },
-    { symbol: 'FUSION', name: 'Fusion Token', icon: '⚡', balance: '5,000.00', price: 1.50 },
-    { symbol: 'USDC', name: 'USD Coin', icon: '💲', balance: '890.00', price: 1 },
-    { symbol: 'MATIC', name: 'Polygon', icon: '🟣', balance: '150.00', price: 0.85 },
-    { symbol: 'ARB', name: 'Arbitrum', icon: '🔵', balance: '200.00', price: 1.20 },
-    { symbol: 'OP', name: 'Optimism', icon: '🔴', balance: '180.00', price: 2.50 },
-  ];
+  // Token data with live prices
+  const tokens = useMemo(() => [
+    { symbol: 'ETH', name: 'Ethereum', icon: '⟠', balance: '2.45', price: prices['ETH']?.price || 2400 },
+    { symbol: 'USDT', name: 'Tether', icon: '₮', balance: '1,250.00', price: prices['USDT']?.price || 1 },
+    { symbol: 'BNB', name: 'BNB', icon: '◎', balance: '5.12', price: prices['BNB']?.price || 300 },
+    { symbol: 'FUSION', name: 'Fusion Token', icon: '⚡', balance: '5,000.00', price: prices['FUSION']?.price || 1.50 },
+    { symbol: 'USDC', name: 'USD Coin', icon: '💲', balance: '890.00', price: prices['USDC']?.price || 1 },
+    { symbol: 'MATIC', name: 'Polygon', icon: '🟣', balance: '150.00', price: prices['MATIC']?.price || 0.85 },
+    { symbol: 'ARB', name: 'Arbitrum', icon: '🔵', balance: '200.00', price: prices['ARB']?.price || 1.20 },
+    { symbol: 'OP', name: 'Optimism', icon: '🔴', balance: '180.00', price: prices['OP']?.price || 2.50 },
+  ], [prices]);
 
   const filteredTokens = tokens.filter(token =>
     token.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||

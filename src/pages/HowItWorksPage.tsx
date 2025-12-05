@@ -83,7 +83,8 @@ const HowItWorksPage = () => {
         'Create a new wallet or import existing with seed phrase',
         'Secure your 12-word recovery phrase offline',
         'Click "Connect Wallet" on our site and select MetaMask'
-      ]
+      ],
+      warning: null,
     },
     {
       name: 'Trust Wallet',
@@ -93,9 +94,36 @@ const HowItWorksPage = () => {
       steps: [
         'Download Trust Wallet from App Store or Google Play',
         'Create a new wallet and backup your recovery phrase',
-        'Open DApp browser within Trust Wallet',
+        '⚠️ IMPORTANT: Open the DApp browser INSIDE Trust Wallet',
         'Navigate to our site and connect your wallet'
-      ]
+      ],
+      warning: 'Must use Trust Wallet\'s built-in browser, not Safari/Chrome!',
+    },
+    {
+      name: 'Phantom',
+      icon: '👻',
+      platform: 'Mobile',
+      difficulty: 'Easy',
+      steps: [
+        'Download Phantom wallet from App Store or Google Play',
+        'Create or import your wallet',
+        '⚠️ IMPORTANT: Tap the browser icon (🌐) inside Phantom app',
+        'Enter our website URL and connect from there'
+      ],
+      warning: 'Phantom ONLY works if you open our site IN the Phantom app browser. It won\'t be detected from Safari/Chrome!',
+    },
+    {
+      name: 'Coinbase Wallet',
+      icon: '🔵',
+      platform: 'Mobile & Desktop',
+      difficulty: 'Easy',
+      steps: [
+        'If you get "Declined" error, use WalletConnect instead',
+        'Click "Connect Wallet" → Select "WalletConnect"',
+        'Scan the QR code with Coinbase Wallet app',
+        'Approve the connection - works universally!'
+      ],
+      warning: 'Getting "Declined"? Use WalletConnect option instead - it\'s more reliable!',
     },
     {
       name: 'Binance Web3 Wallet',
@@ -104,23 +132,25 @@ const HowItWorksPage = () => {
       difficulty: 'Medium',
       steps: [
         'Open Binance app and go to "Wallets" tab',
-        'Select "Web3" and create a new Web3 wallet',
-        'Complete identity verification if required',
-        'Use the built-in DApp browser to connect to our site'
-      ]
+        '⚠️ FIRST: Create a Web3 wallet (separate from exchange wallet)',
+        'Complete the Web3 wallet setup',
+        'Use Binance\'s built-in DApp browser to connect to our site'
+      ],
+      warning: 'You must CREATE a Web3 wallet first! It\'s separate from your Binance exchange wallet.',
     },
     {
-      name: 'WalletConnect',
+      name: 'WalletConnect (Universal)',
       icon: '🔗',
-      platform: 'Any Wallet',
+      platform: 'Any Wallet + Any Device',
       difficulty: 'Easy',
       steps: [
         'Click "Connect Wallet" and select WalletConnect',
-        'Scan the QR code with any WalletConnect-compatible wallet',
+        'Scan the QR code with ANY mobile wallet',
         'Approve the connection on your mobile device',
-        'Great for connecting mobile wallets to desktop browsers'
-      ]
-    }
+        'Perfect for connecting phone wallet to laptop!'
+      ],
+      warning: null,
+    },
   ];
 
   const faqs = [
@@ -226,6 +256,7 @@ const HowItWorksPage = () => {
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         {wallet.platform.includes('Desktop') && <Monitor className="w-4 h-4" />}
                         {wallet.platform.includes('Mobile') && <Smartphone className="w-4 h-4" />}
+                        {wallet.platform.includes('Any') && <Globe className="w-4 h-4" />}
                         <span>{wallet.platform}</span>
                         <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-xs">
                           {wallet.difficulty}
@@ -233,13 +264,18 @@ const HowItWorksPage = () => {
                       </div>
                     </div>
                   </div>
+                  {wallet.warning && (
+                    <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+                      <p className="text-xs text-yellow-500 font-medium">⚠️ {wallet.warning}</p>
+                    </div>
+                  )}
                   <ol className="space-y-2">
                     {wallet.steps.map((step, i) => (
                       <li key={i} className="flex gap-3 text-sm">
                         <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 text-xs font-bold">
                           {i + 1}
                         </span>
-                        <span className="text-muted-foreground">{step}</span>
+                        <span className={`${step.includes('⚠️') ? 'text-yellow-500 font-medium' : 'text-muted-foreground'}`}>{step}</span>
                       </li>
                     ))}
                   </ol>

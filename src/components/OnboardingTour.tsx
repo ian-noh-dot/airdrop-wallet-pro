@@ -37,7 +37,7 @@ const OnboardingTour = ({ onComplete }: OnboardingTourProps) => {
       icon: <Wallet className="w-12 h-12" />,
       title: t('onboarding.wallet.title'),
       description: t('onboarding.wallet.desc'),
-      highlight: 'Connect MetaMask, Trust Wallet, or any Web3 wallet in seconds.',
+      highlight: 'MetaMask, Trust Wallet, Phantom, Coinbase - connect any wallet! Mobile users: open this site IN your wallet app browser.',
       color: 'from-blue-500 to-cyan-500',
     },
     {
