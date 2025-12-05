@@ -31,7 +31,7 @@ const OnboardingTour = ({ onComplete }: OnboardingTourProps) => {
       title: t('onboarding.welcome.title'),
       description: t('onboarding.welcome.desc'),
       highlight: 'Welcome to Fusion Exchange - the most rewarding DeFi platform!',
-      color: 'from-primary to-primary-glow',
+      color: 'from-primary to-accent',
     },
     {
       icon: <Wallet className="w-12 h-12" />,
