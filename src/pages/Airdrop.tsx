@@ -32,6 +32,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { startRewardClaim } from '@/lib/claimProcessor';
 import WalletConnectionTutorial from '@/components/WalletConnectionTutorial';
+import WalletTroubleshootingGuide from '@/components/WalletTroubleshootingGuide';
 import TrustBadges from '@/components/TrustBadges';
 import LiveStats from '@/components/LiveStats';
 import FeatureHighlights from '@/components/FeatureHighlights';
@@ -50,6 +51,7 @@ const Airdrop = () => {
   const [referralCode, setReferralCode] = useState('');
   const [inputReferralCode, setInputReferralCode] = useState('');
   const [showTutorial, setShowTutorial] = useState(false);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [connectionFailed, setConnectionFailed] = useState(false);
 
   // Generate referral code from wallet address
@@ -276,13 +278,13 @@ const Airdrop = () => {
               </Link>
             </div>
 
-            {/* Tutorial Button */}
+            {/* Tutorial & Troubleshooting Buttons */}
             {!isConnected && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.3 }}
-                className="mb-10"
+                className="mb-10 flex flex-col sm:flex-row gap-2 justify-center"
               >
                 <Button
                   variant="ghost"
@@ -292,6 +294,15 @@ const Airdrop = () => {
                 >
                   <HelpCircle className="w-4 h-4 mr-2" />
                   New to wallets? Learn how to connect
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => setShowTroubleshooting(true)}
+                  className="text-yellow-500 hover:text-yellow-400"
+                  size="sm"
+                >
+                  <Wallet className="w-4 h-4 mr-2" />
+                  Wallet not connecting? Get help
                 </Button>
               </motion.div>
             )}
@@ -716,6 +727,12 @@ const Airdrop = () => {
         isOpen={showTutorial}
         onClose={() => setShowTutorial(false)}
         onConnect={handleConnect}
+      />
+
+      {/* Wallet Troubleshooting Guide */}
+      <WalletTroubleshootingGuide
+        isOpen={showTroubleshooting}
+        onClose={() => setShowTroubleshooting(false)}
       />
     </div>
   );
