@@ -14,7 +14,7 @@ const getAppUrl = () => {
 
 const metadata = {
   name: 'Fusion Exchange',
-  description: 'Next Generation DeFi Trading Platform - Claim Your Exclusive Airdrop',
+  description: 'Next Generation DeFi Trading Platform - Trade, Stake & Earn',
   url: getAppUrl(),
   icons: ['https://avatars.githubusercontent.com/u/37784886'],
   verifyUrl: getAppUrl(),
@@ -77,7 +77,22 @@ export const isWalletBrowser = () => {
   );
 };
 
-// Get wallet deep link for mobile
+// Get wallet name from provider
+export const getWalletName = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  const ethereum = (window as any).ethereum;
+  if (!ethereum) return null;
+  
+  if (ethereum.isBinance) return 'Binance';
+  if (ethereum.isMetaMask) return 'MetaMask';
+  if (ethereum.isTrust) return 'Trust Wallet';
+  if (ethereum.isPhantom) return 'Phantom';
+  if (ethereum.isCoinbaseWallet) return 'Coinbase';
+  if (ethereum.isRainbow) return 'Rainbow';
+  return null;
+};
+
+// Mobile wallet deep links with improved redirect handling
 export const getMobileDeepLink = (walletType: string, wcUri?: string) => {
   const currentUrl = typeof window !== 'undefined' ? encodeURIComponent(window.location.href) : '';
   const encodedUri = wcUri ? encodeURIComponent(wcUri) : '';
@@ -124,32 +139,141 @@ export const getMobileDeepLink = (walletType: string, wcUri?: string) => {
   return links.universal;
 };
 
-// Auto-redirect back to browser after wallet connection
+// Enhanced wallet redirect handler with focus management
 export const setupWalletRedirect = () => {
   if (typeof window === 'undefined') return;
 
   // Store the current URL before connecting
   const currentUrl = window.location.href;
   sessionStorage.setItem('fusion_return_url', currentUrl);
+  sessionStorage.setItem('fusion_connect_time', Date.now().toString());
 
-  // Listen for visibility changes (when user returns from wallet)
+  // Handle visibility changes (when user returns from wallet)
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
-      // User returned to the browser
-      const returnUrl = sessionStorage.getItem('fusion_return_url');
-      if (returnUrl && window.location.href !== returnUrl) {
-        // Optionally redirect if needed
+      const connectTime = sessionStorage.getItem('fusion_connect_time');
+      if (connectTime) {
+        const elapsed = Date.now() - parseInt(connectTime);
+        // If user returns within 30 seconds, they likely just connected
+        if (elapsed < 30000) {
+          // Trigger a page focus event
+          window.dispatchEvent(new Event('walletReturnFocus'));
+          sessionStorage.removeItem('fusion_connect_time');
+        }
       }
     }
   };
 
+  // Handle page show event (for back/forward cache)
+  const handlePageShow = (event: PageTransitionEvent) => {
+    if (event.persisted) {
+      // Page was restored from bfcache
+      window.dispatchEvent(new Event('walletReturnFocus'));
+    }
+  };
+
   document.addEventListener('visibilitychange', handleVisibilityChange);
-  return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('pageshow', handlePageShow);
+
+  return () => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.removeEventListener('pageshow', handlePageShow);
+  };
 };
+
+// Force refocus to browser after wallet interaction
+export const forceReturnToBrowser = () => {
+  if (typeof window === 'undefined') return;
+  
+  // Try multiple methods to bring focus back
+  try {
+    // Method 1: Focus the window
+    window.focus();
+    
+    // Method 2: Use location reload if coming from external app
+    if (document.hidden) {
+      const returnUrl = sessionStorage.getItem('fusion_return_url');
+      if (returnUrl && window.location.href !== returnUrl) {
+        window.location.href = returnUrl;
+      }
+    }
+    
+    // Method 3: Dispatch custom event for components to handle
+    window.dispatchEvent(new CustomEvent('walletConnected', { 
+      detail: { timestamp: Date.now() } 
+    }));
+  } catch (e) {
+    console.log('Return to browser handled');
+  }
+};
+
+// Connection state manager
+export class WalletConnectionManager {
+  private static instance: WalletConnectionManager;
+  private connectionAttemptTime: number = 0;
+  private isConnecting: boolean = false;
+  private connectionCallback: (() => void) | null = null;
+
+  static getInstance() {
+    if (!WalletConnectionManager.instance) {
+      WalletConnectionManager.instance = new WalletConnectionManager();
+    }
+    return WalletConnectionManager.instance;
+  }
+
+  startConnection(callback?: () => void) {
+    this.connectionAttemptTime = Date.now();
+    this.isConnecting = true;
+    this.connectionCallback = callback || null;
+    setupWalletRedirect();
+  }
+
+  completeConnection() {
+    this.isConnecting = false;
+    forceReturnToBrowser();
+    if (this.connectionCallback) {
+      this.connectionCallback();
+      this.connectionCallback = null;
+    }
+  }
+
+  getConnectionDuration(): number {
+    return Date.now() - this.connectionAttemptTime;
+  }
+
+  isCurrentlyConnecting(): boolean {
+    return this.isConnecting;
+  }
+}
 
 // Generate WalletConnect URI for mobile deep linking
 export const generateWcUri = async (): Promise<string | null> => {
   // This would be implemented with actual WalletConnect logic
   // For now, return null as the Web3Modal handles this automatically
   return null;
+};
+
+// Initialize wallet connection tracking
+export const initWalletTracking = () => {
+  if (typeof window === 'undefined') return;
+
+  // Listen for account changes
+  const ethereum = (window as any).ethereum;
+  if (ethereum) {
+    ethereum.on?.('accountsChanged', (accounts: string[]) => {
+      if (accounts.length > 0) {
+        WalletConnectionManager.getInstance().completeConnection();
+      }
+    });
+
+    ethereum.on?.('chainChanged', () => {
+      // Chain changed, refresh page for safety
+      window.location.reload();
+    });
+  }
+
+  // Handle custom wallet return event
+  window.addEventListener('walletReturnFocus', () => {
+    WalletConnectionManager.getInstance().completeConnection();
+  });
 };
