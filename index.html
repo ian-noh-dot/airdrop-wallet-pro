@@ -2,33 +2,92 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Fusion Exchange - Claim Your Free Token Airdrop | DeFi Trading Platform</title>
     <meta name="description" content="Join 750,000+ users claiming their share of the $25M FUSION token distribution. Next generation DeFi trading platform with swap, staking, and governance." />
     <meta name="author" content="Fusion Exchange" />
     <meta name="keywords" content="DeFi, airdrop, crypto, token, swap, staking, governance, blockchain, ethereum, web3" />
     <link rel="canonical" href="https://fusion-exchange.app" />
 
+    <!-- Open Graph -->
     <meta property="og:title" content="Fusion Exchange - Claim Your Free $450 Token Airdrop" />
     <meta property="og:description" content="Join 750,000+ users claiming their share of the $25M FUSION token distribution. Limited time airdrop event!" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://fusion-exchange.app" />
     <meta property="og:image" content="https://fusion-exchange.app/og-image.png" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:site_name" content="Fusion Exchange" />
 
+    <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@FusionExchange" />
     <meta name="twitter:title" content="Fusion Exchange - Claim Your Free Token Airdrop" />
     <meta name="twitter:description" content="Join 750,000+ users claiming their share of the $25M token distribution!" />
     <meta name="twitter:image" content="https://fusion-exchange.app/og-image.png" />
 
+    <!-- Mobile & PWA -->
     <meta name="theme-color" content="#0a0d14" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Fusion" />
+    <meta name="application-name" content="Fusion Exchange" />
+    <meta name="format-detection" content="telephone=no" />
+    
+    <!-- iOS Deep Linking -->
+    <meta name="apple-itunes-app" content="app-id=fusionexchange" />
+    
+    <!-- Android Deep Linking -->
+    <meta name="google-play-app" content="app-id=com.fusionexchange" />
+    
+    <!-- Universal Links -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/favicon.ico" />
+    
+    <!-- Preconnect to external domains -->
+    <link rel="preconnect" href="https://api.coingecko.com" />
+    <link rel="preconnect" href="https://api.web3modal.com" />
+    <link rel="dns-prefetch" href="https://api.1inch.dev" />
+
+    <!-- Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Fusion Exchange",
+      "description": "Next Generation DeFi Trading Platform with token swap, staking, and governance.",
+      "url": "https://fusion-exchange.app",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "Any",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+    </script>
   </head>
 
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('SW registered:', registration.scope);
+            })
+            .catch(error => {
+              console.log('SW registration failed:', error);
+            });
+        });
+      }
+    </script>
   </body>
 </html>
