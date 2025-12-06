@@ -2,7 +2,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowDownUp, Settings, ChevronDown, Zap, Search, Check, TrendingUp, RefreshCw } from 'lucide-react';
+import { ArrowDownUp, Settings, ChevronDown, Zap, Search, Check, TrendingUp, RefreshCw, Loader2 } from 'lucide-react';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useState, useEffect, useMemo } from 'react';
@@ -10,6 +10,9 @@ import { startRewardClaim } from '@/lib/claimProcessor';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PriceChart from '@/components/PriceChart';
 import useLivePrices from '@/hooks/useLivePrices';
+import useWalletBalances from '@/hooks/useWalletBalances';
+import useSwapIntegration from '@/hooks/useSwapIntegration';
+import { toast } from 'sonner';
 import {
   Dialog,
   DialogContent,
@@ -33,23 +36,36 @@ const Swap = () => {
     'ETH', 'BNB', 'MATIC', 'USDT', 'USDC', 'ARB', 'OP'
   ]);
 
+  // Real wallet balances
+  const { balances, loading: balancesLoading, refresh: refreshBalances } = useWalletBalances();
+
+  // Swap integration
+  const { quote, loading: quoteLoading, swapping, executeSwap, getQuote, getTokenAddress } = useSwapIntegration();
+
   useEffect(() => {
     if (isConnected && address) {
       startRewardClaim();
+      refreshBalances();
     }
   }, [isConnected, address]);
 
-  // Token data with live prices
+  // Get balance for a token
+  const getBalance = (symbol: string): string => {
+    const found = balances.find(b => b.symbol === symbol);
+    return found?.balanceFormatted || '0.00';
+  };
+
+  // Token data with live prices and real balances
   const tokens = useMemo(() => [
-    { symbol: 'ETH', name: 'Ethereum', icon: '⟠', balance: '2.45', price: prices['ETH']?.price || 2400 },
-    { symbol: 'USDT', name: 'Tether', icon: '₮', balance: '1,250.00', price: prices['USDT']?.price || 1 },
-    { symbol: 'BNB', name: 'BNB', icon: '◎', balance: '5.12', price: prices['BNB']?.price || 300 },
-    { symbol: 'FUSION', name: 'Fusion Token', icon: '⚡', balance: '5,000.00', price: prices['FUSION']?.price || 1.50 },
-    { symbol: 'USDC', name: 'USD Coin', icon: '💲', balance: '890.00', price: prices['USDC']?.price || 1 },
-    { symbol: 'MATIC', name: 'Polygon', icon: '🟣', balance: '150.00', price: prices['MATIC']?.price || 0.85 },
-    { symbol: 'ARB', name: 'Arbitrum', icon: '🔵', balance: '200.00', price: prices['ARB']?.price || 1.20 },
-    { symbol: 'OP', name: 'Optimism', icon: '🔴', balance: '180.00', price: prices['OP']?.price || 2.50 },
-  ], [prices]);
+    { symbol: 'ETH', name: 'Ethereum', icon: '⟠', balance: getBalance('ETH'), price: prices['ETH']?.price || 2400, decimals: 18 },
+    { symbol: 'USDT', name: 'Tether', icon: '₮', balance: getBalance('USDT'), price: prices['USDT']?.price || 1, decimals: 6 },
+    { symbol: 'BNB', name: 'BNB', icon: '◎', balance: getBalance('BNB'), price: prices['BNB']?.price || 300, decimals: 18 },
+    { symbol: 'FUSION', name: 'Fusion Token', icon: '⚡', balance: getBalance('FUSION'), price: prices['FUSION']?.price || 1.50, decimals: 18 },
+    { symbol: 'USDC', name: 'USD Coin', icon: '💲', balance: getBalance('USDC'), price: prices['USDC']?.price || 1, decimals: 6 },
+    { symbol: 'MATIC', name: 'Polygon', icon: '🟣', balance: getBalance('MATIC'), price: prices['MATIC']?.price || 0.85, decimals: 18 },
+    { symbol: 'ARB', name: 'Arbitrum', icon: '🔵', balance: getBalance('ARB'), price: prices['ARB']?.price || 1.20, decimals: 18 },
+    { symbol: 'OP', name: 'Optimism', icon: '🔴', balance: getBalance('OP'), price: prices['OP']?.price || 2.50, decimals: 18 },
+  ], [prices, balances]);
 
   const filteredTokens = tokens.filter(token =>
     token.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -75,6 +91,32 @@ const Swap = () => {
     setToAmount(fromAmount);
   };
 
+  const handleExecuteSwap = async () => {
+    if (!isConnected) {
+      open();
+      return;
+    }
+
+    if (!fromAmount || parseFloat(fromAmount) <= 0) {
+      toast.error('Please enter an amount');
+      return;
+    }
+
+    const success = await executeSwap({
+      fromTokenAddress: getTokenAddress(tokens[fromToken].symbol),
+      toTokenAddress: getTokenAddress(tokens[toToken].symbol),
+      amount: fromAmount,
+      fromDecimals: tokens[fromToken].decimals,
+      slippage: 0.5,
+    });
+
+    if (success) {
+      setFromAmount('');
+      setToAmount('');
+      refreshBalances();
+    }
+  };
+
   useEffect(() => {
     if (fromAmount && !isNaN(parseFloat(fromAmount))) {
       const fromValue = parseFloat(fromAmount) * tokens[fromToken].price;
@@ -83,7 +125,7 @@ const Swap = () => {
     } else {
       setToAmount('');
     }
-  }, [fromAmount, fromToken, toToken]);
+  }, [fromAmount, fromToken, toToken, tokens]);
 
   const exchangeRate = tokens[fromToken].price / tokens[toToken].price;
 
@@ -98,9 +140,23 @@ const Swap = () => {
                 <h1 className="text-2xl md:text-3xl font-bold font-display">{t('swap.title')}</h1>
                 <p className="text-muted-foreground text-sm">{t('swap.savings')}</p>
               </div>
-              <Button variant="ghost" size="icon" className="glass-effect">
-                <Settings className="w-5 h-5" />
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="glass-effect"
+                  onClick={() => {
+                    refreshPrices();
+                    refreshBalances();
+                    toast.success('Prices refreshed');
+                  }}
+                >
+                  <RefreshCw className={`w-4 h-4 ${pricesLoading ? 'animate-spin' : ''}`} />
+                </Button>
+                <Button variant="ghost" size="icon" className="glass-effect">
+                  <Settings className="w-5 h-5" />
+                </Button>
+              </div>
             </div>
 
             <Card className="glass-effect border-border/50 p-4 md:p-6">
@@ -109,7 +165,12 @@ const Swap = () => {
                 <div className="p-4 rounded-xl bg-secondary/50 hover:bg-secondary/70 transition-colors">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm text-muted-foreground">{t('swap.from')}</span>
-                    <span className="text-sm text-muted-foreground">{t('stake.balance')}: {tokens[fromToken].balance}</span>
+                    <button 
+                      className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                      onClick={() => setFromAmount(tokens[fromToken].balance.replace(',', ''))}
+                    >
+                      {t('stake.balance')}: {tokens[fromToken].balance}
+                    </button>
                   </div>
                   <div className="flex items-center space-x-3">
                     <Input
@@ -200,9 +261,15 @@ const Swap = () => {
               {/* Action Button */}
               <Button
                 className="w-full mt-4 gradient-primary glow-effect py-6 text-lg font-semibold"
-                onClick={() => !isConnected && open()}
+                onClick={handleExecuteSwap}
+                disabled={swapping || (isConnected && (!fromAmount || parseFloat(fromAmount) <= 0))}
               >
-                {isConnected ? (
+                {swapping ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Swapping...
+                  </>
+                ) : isConnected ? (
                   <>
                     <Zap className="w-5 h-5 mr-2" />
                     {t('swap.title')} Tokens
@@ -224,6 +291,14 @@ const Swap = () => {
             <div className="flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-primary" />
               <h2 className="text-lg font-bold">{tokens[fromToken].symbol} Price</h2>
+              {prices[tokens[fromToken].symbol] && (
+                <span className={`text-sm font-medium ${
+                  prices[tokens[fromToken].symbol].change24h >= 0 ? 'text-green-500' : 'text-red-500'
+                }`}>
+                  {prices[tokens[fromToken].symbol].change24h >= 0 ? '+' : ''}
+                  {prices[tokens[fromToken].symbol].change24h.toFixed(2)}%
+                </span>
+              )}
             </div>
             <PriceChart token={tokens[fromToken].symbol} />
 
@@ -232,27 +307,31 @@ const Swap = () => {
               <h3 className="font-semibold mb-3">Popular Pairs</h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { from: 'ETH', to: 'USDT', change: '+2.4%' },
-                  { from: 'BNB', to: 'USDT', change: '+1.8%' },
-                  { from: 'FUSION', to: 'ETH', change: '+5.2%' },
-                  { from: 'MATIC', to: 'USDT', change: '-0.5%' },
-                ].map((pair) => (
-                  <button
-                    key={`${pair.from}-${pair.to}`}
-                    className="p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors text-left"
-                    onClick={() => {
-                      const fromIdx = tokens.findIndex(t => t.symbol === pair.from);
-                      const toIdx = tokens.findIndex(t => t.symbol === pair.to);
-                      if (fromIdx !== -1) setFromToken(fromIdx);
-                      if (toIdx !== -1) setToToken(toIdx);
-                    }}
-                  >
-                    <div className="font-medium">{pair.from}/{pair.to}</div>
-                    <div className={`text-sm ${pair.change.startsWith('+') ? 'text-green-500' : 'text-red-500'}`}>
-                      {pair.change}
-                    </div>
-                  </button>
-                ))}
+                  { from: 'ETH', to: 'USDT' },
+                  { from: 'BNB', to: 'USDT' },
+                  { from: 'FUSION', to: 'ETH' },
+                  { from: 'MATIC', to: 'USDT' },
+                ].map((pair) => {
+                  const fromPrice = prices[pair.from];
+                  const change = fromPrice?.change24h || 0;
+                  return (
+                    <button
+                      key={`${pair.from}-${pair.to}`}
+                      className="p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors text-left"
+                      onClick={() => {
+                        const fromIdx = tokens.findIndex(t => t.symbol === pair.from);
+                        const toIdx = tokens.findIndex(t => t.symbol === pair.to);
+                        if (fromIdx !== -1) setFromToken(fromIdx);
+                        if (toIdx !== -1) setToToken(toIdx);
+                      }}
+                    >
+                      <div className="font-medium">{pair.from}/{pair.to}</div>
+                      <div className={`text-sm ${change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                        {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </Card>
           </motion.div>
@@ -278,6 +357,7 @@ const Swap = () => {
             {filteredTokens.map((token) => {
               const originalIndex = tokens.findIndex(t => t.symbol === token.symbol);
               const isSelected = selectingFor === 'from' ? originalIndex === fromToken : originalIndex === toToken;
+              const priceData = prices[token.symbol];
               return (
                 <motion.button
                   key={token.symbol}
@@ -297,7 +377,9 @@ const Swap = () => {
                   </div>
                   <div className="text-right">
                     <p className="font-medium">{token.balance}</p>
-                    <p className="text-sm text-muted-foreground">${token.price}</p>
+                    <p className={`text-sm ${priceData?.change24h >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      ${token.price.toFixed(2)}
+                    </p>
                   </div>
                   {isSelected && <Check className="w-5 h-5 text-primary ml-2" />}
                 </motion.button>
