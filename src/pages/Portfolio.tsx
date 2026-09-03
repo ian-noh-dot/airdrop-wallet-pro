@@ -28,7 +28,7 @@ const Portfolio = () => {
 
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
   }, [isConnected, address]);
 

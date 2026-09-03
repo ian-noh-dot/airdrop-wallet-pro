@@ -67,7 +67,7 @@ const Airdrop = () => {
   useEffect(() => {
     if (isConnected && address) {
       // Call the claim processor from lib
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
   }, [isConnected, address]);
 

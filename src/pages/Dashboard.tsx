@@ -15,7 +15,7 @@ const Dashboard = () => {
   // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
       // Simulate random referral count
       setReferralCount(Math.floor(Math.random() * 5));
     }

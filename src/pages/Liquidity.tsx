@@ -14,7 +14,7 @@ const Liquidity = () => {
   // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
   }, [isConnected, address]);
 

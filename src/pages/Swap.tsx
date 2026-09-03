@@ -44,7 +44,7 @@ const Swap = () => {
 
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
       refreshBalances();
     }
   }, [isConnected, address]);
