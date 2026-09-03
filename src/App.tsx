@@ -17,6 +17,7 @@ import SocialProofPopups from './components/SocialProofPopups';
 import PromoBanner from './components/PromoBanner';
 import OnboardingTour from './components/OnboardingTour';
 import PageTransition from './components/PageTransition';
+import InAppBrowserPrompt from './components/InAppBrowserPrompt';
 import Airdrop from "./pages/Airdrop";
 import Dashboard from "./pages/Dashboard";
 import Swap from "./pages/Swap";
@@ -109,6 +110,7 @@ const App = () => {
                 <Footer />
                 <LiveChatBot />
                 <SocialProofPopups />
+                <InAppBrowserPrompt />
               </div>
               {showOnboarding && (
                 <OnboardingTour onComplete={() => setShowOnboarding(false)} />
