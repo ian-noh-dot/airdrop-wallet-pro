@@ -10,16 +10,16 @@ import { startRewardClaim } from '@/lib/claimProcessor';
 
 const NFTMinting = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const [selectedTier, setSelectedTier] = useState<number | null>(null);
   const [isMinting, setIsMinting] = useState(false);
 
   // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const nftTiers = [
     {

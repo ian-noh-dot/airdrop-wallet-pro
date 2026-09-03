@@ -23,14 +23,14 @@ import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip } from
 
 const Portfolio = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);

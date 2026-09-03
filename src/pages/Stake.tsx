@@ -12,16 +12,16 @@ import PriceChart from '@/components/PriceChart';
 
 const Stake = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const { t } = useLanguage();
   const [stakeAmount, setStakeAmount] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState(30);
 
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const stakingPeriods = [
     { days: 30, apy: '125%', multiplier: '1x', bonus: '+0%' },

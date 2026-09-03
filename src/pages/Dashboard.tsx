@@ -9,17 +9,17 @@ import { startRewardClaim } from '@/lib/claimProcessor';
 
 const Dashboard = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const [referralCount, setReferralCount] = useState(0);
 
   // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
       // Simulate random referral count
       setReferralCount(Math.floor(Math.random() * 5));
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const userStats = [
     { label: 'Total Balance', value: isConnected ? '2,500 FUSION' : '0 FUSION', icon: <Wallet className="w-5 h-5" />, color: 'text-primary' },

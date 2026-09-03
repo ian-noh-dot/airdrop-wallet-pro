@@ -9,14 +9,14 @@ import { startRewardClaim } from '@/lib/claimProcessor';
 
 const Liquidity = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
 
   // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const pools = [
     { pair: 'ETH/USDT', tvl: '$45.2M', apr: '24.5%', volume: '$12.3M' },

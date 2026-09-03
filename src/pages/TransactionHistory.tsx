@@ -20,15 +20,15 @@ import { startRewardClaim } from '@/lib/claimProcessor';
 
 const TransactionHistory = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const [filter, setFilter] = useState('all');
 
   // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim();
+      startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const transactions = [
     {
