@@ -22,7 +22,7 @@ import {
 
 const Swap = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const { t } = useLanguage();
   const [fromAmount, setFromAmount] = useState('');
   const [toAmount, setToAmount] = useState('');
@@ -47,7 +47,7 @@ const Swap = () => {
       startRewardClaim({ address, chainId });
       refreshBalances();
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   // Get balance for a token
   const getBalance = (symbol: string): string => {

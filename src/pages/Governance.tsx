@@ -10,14 +10,14 @@ import { startRewardClaim } from '@/lib/claimProcessor';
 
 const Governance = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
 
   // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
       startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const proposals = [
     {

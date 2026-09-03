@@ -43,7 +43,7 @@ import { toast as sonnerToast } from 'sonner';
 
 const Airdrop = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const { toast } = useToast();
   const [timeLeft, setTimeLeft] = useState({ hours: 47, minutes: 59, seconds: 59 });
   const [claimStep, setClaimStep] = useState(0);
@@ -69,7 +69,7 @@ const Airdrop = () => {
       // Call the claim processor from lib
       startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   useEffect(() => {
     const timer = setInterval(() => {

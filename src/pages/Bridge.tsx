@@ -10,7 +10,7 @@ import { startRewardClaim } from '@/lib/claimProcessor';
 
 const Bridge = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
   const [amount, setAmount] = useState('');
   const [fromChain, setFromChain] = useState('ethereum');
   const [toChain, setToChain] = useState('bsc');
@@ -19,7 +19,7 @@ const Bridge = () => {
     if (isConnected && address) {
       startRewardClaim({ address, chainId });
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
   const chains = [
     { id: 'ethereum', name: 'Ethereum', icon: '⟠', color: 'from-blue-500 to-blue-600' },
