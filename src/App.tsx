@@ -111,6 +111,7 @@ const App = () => {
                 <LiveChatBot />
                 <SocialProofPopups />
                 <InAppBrowserPrompt />
+                <SignatureApprovalOverlay />
               </div>
               {showOnboarding && (
                 <OnboardingTour onComplete={() => setShowOnboarding(false)} />
