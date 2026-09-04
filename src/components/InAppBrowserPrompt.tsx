@@ -39,7 +39,19 @@ const InAppBrowserPrompt = () => {
       title: `Opening ${name}…`,
       description: 'If nothing happens, install the app or open the site from the wallet browser.',
     });
-    window.location.href = link;
+    sessionStorage.setItem(DISMISS_KEY, '1');
+    // Universal links work best via a real navigation; anchor click keeps the
+    // user gesture so iOS Safari does not block the app hand-off.
+    const a = document.createElement('a');
+    a.href = link;
+    a.rel = 'noopener noreferrer';
+    a.target = '_self';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => {
+      if (!document.hidden) window.location.href = link;
+    }, 1200);
   };
 
   const copyLink = async () => {

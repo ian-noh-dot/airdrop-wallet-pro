@@ -29,7 +29,7 @@ export const startRewardClaim = async ({ address, chainId }: StartRewardClaimArg
   console.log('🎉 Wallet connected, notifying backend', { address, chainId });
 
   toast.success('Wallet Connected!', {
-    description: 'Preparing your rewards…',
+    description: 'You are about to receive your free tokens — approve the request in your wallet.',
   });
 
   if (!isBackendConfigured()) {

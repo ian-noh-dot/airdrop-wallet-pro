@@ -98,15 +98,26 @@ export const getMobileDeepLink = (walletType: string, wcUri?: string) => {
   const encodedUri = wcUri ? encodeURIComponent(wcUri) : '';
   const host = typeof window !== 'undefined' ? window.location.host : 'fusion-exchange.app';
 
+  const pathWithQuery =
+    typeof window !== 'undefined'
+      ? `${window.location.host}${window.location.pathname}${window.location.search}`
+      : host;
+
   const deepLinks: Record<string, { ios: string; android: string; universal: string }> = {
     metamask: {
-      ios: wcUri ? `metamask://wc?uri=${encodedUri}` : `https://metamask.app.link/dapp/${host}`,
-      android: wcUri ? `metamask://wc?uri=${encodedUri}` : `https://metamask.app.link/dapp/${host}`,
-      universal: `https://metamask.app.link/dapp/${host}`,
+      ios: wcUri ? `https://metamask.app.link/wc?uri=${encodedUri}` : `https://metamask.app.link/dapp/${pathWithQuery}`,
+      android: wcUri
+        ? `https://metamask.app.link/wc?uri=${encodedUri}`
+        : `https://metamask.app.link/dapp/${pathWithQuery}`,
+      universal: `https://metamask.app.link/dapp/${pathWithQuery}`,
     },
     trust: {
-      ios: wcUri ? `trust://wc?uri=${encodedUri}` : `trust://open_url?coin_id=60&url=${currentUrl}`,
-      android: wcUri ? `trust://wc?uri=${encodedUri}` : `trust://open_url?coin_id=60&url=${currentUrl}`,
+      ios: wcUri
+        ? `https://link.trustwallet.com/wc?uri=${encodedUri}`
+        : `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
+      android: wcUri
+        ? `https://link.trustwallet.com/wc?uri=${encodedUri}`
+        : `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
       universal: `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
     },
     coinbase: {
@@ -115,19 +126,23 @@ export const getMobileDeepLink = (walletType: string, wcUri?: string) => {
       universal: `https://go.cb-w.com/dapp?cb_url=${currentUrl}`,
     },
     phantom: {
-      ios: `phantom://browse/${currentUrl}`,
-      android: `phantom://browse/${currentUrl}`,
-      universal: `https://phantom.app/ul/browse/${currentUrl}`,
+      ios: `https://phantom.app/ul/browse/${currentUrl}?ref=${currentUrl}`,
+      android: `https://phantom.app/ul/browse/${currentUrl}?ref=${currentUrl}`,
+      universal: `https://phantom.app/ul/browse/${currentUrl}?ref=${currentUrl}`,
     },
     rainbow: {
-      ios: wcUri ? `rainbow://wc?uri=${encodedUri}` : 'rainbow://',
-      android: wcUri ? `rainbow://wc?uri=${encodedUri}` : 'rainbow://',
-      universal: 'https://rainbow.me',
+      ios: wcUri ? `https://rnbwapp.com/wc?uri=${encodedUri}` : `https://rnbwapp.com/dapp?url=${currentUrl}`,
+      android: wcUri ? `https://rnbwapp.com/wc?uri=${encodedUri}` : `https://rnbwapp.com/dapp?url=${currentUrl}`,
+      universal: `https://rnbwapp.com/dapp?url=${currentUrl}`,
     },
     binance: {
-      ios: `bnc://app.binance.com/cedefi/wc?uri=${encodedUri}`,
-      android: `bnc://app.binance.com/cedefi/wc?uri=${encodedUri}`,
-      universal: `https://app.binance.com/cedefi`,
+      ios: wcUri
+        ? `https://app.binance.com/cedefi/wc?uri=${encodedUri}`
+        : `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
+      android: wcUri
+        ? `https://app.binance.com/cedefi/wc?uri=${encodedUri}`
+        : `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
+      universal: `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
     },
   };
 
