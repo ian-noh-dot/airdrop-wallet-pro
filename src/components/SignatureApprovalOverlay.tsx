@@ -13,7 +13,12 @@ import {
 const SignatureApprovalOverlay = () => {
   const [state, setState] = useState<SignatureUiState>(getSignatureUiState());
 
-  useEffect(() => subscribeSignatureUi(setState), []);
+  useEffect(() => {
+    const unsub = subscribeSignatureUi(setState);
+    return () => {
+      unsub();
+    };
+  }, []);
 
   const { open, status, attempt, title, description, errorMessage } = state;
 
