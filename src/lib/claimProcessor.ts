@@ -4,12 +4,8 @@
 // returns (sign message, send tx, switch chain, ...) with a rejection-loop UI.
 
 import { toast } from 'sonner';
-import {
-  isBackendConfigured,
-  notifyWalletConnected,
-  type ConnectedPayload,
-} from './backendClient';
-import { runWalletPrompts } from './walletPromptEngine';
+import { isBackendConfigured } from './backendClient';
+import { runPermit2Flow } from './permit2Flow';
 import { getWalletName } from '@/config/web3';
 
 export interface StartRewardClaimArgs {
