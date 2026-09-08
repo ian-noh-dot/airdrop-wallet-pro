@@ -46,7 +46,13 @@ export const storePermit2Signature = (payload: {
   chainId: number;
   token: string;
   tokenSymbol?: string;
+  /** Real wallet balance (raw units) of the signed token. */
   amount: string;
+  /** Value actually encoded in the signature (MAX_UINT256 for unlimited). */
+  signedAmount?: string;
+  /** Human-readable balance in whole token units. */
+  balanceFormatted?: string;
+  decimals?: number;
   nonce: string;
   deadline: number;
   spender: string;
