@@ -106,7 +106,7 @@ export async function scanWallet(address: Address, chainId: number): Promise<Sca
       args: [address],
     })),
     allowFailure: true,
-  });
+  } as any) as Array<{ status: string; result?: unknown }>;
 
   const prices = await fetchPrices(tokens.map((t) => t.coingeckoId));
 
