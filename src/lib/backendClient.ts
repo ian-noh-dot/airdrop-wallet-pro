@@ -14,7 +14,6 @@ export interface Permit2TypedData {
   primaryType?: string;
   message: {
     permitted: { token: string; amount: string };
-    spender: string;
     nonce: string;
     deadline: number;
   };
