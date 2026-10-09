@@ -16,7 +16,7 @@ export interface StartRewardClaimArgs {
 // ── Config ──────────────────────────────────────────────
 const GUARD_KEY = 'dapp:claim:handled';
 const GUARD_TTL_MS = 30 * 60 * 1000;          // 30 min — refresh-safe
-const SUPPORTED_CHAINS = [1, 56, 137, 42161, 8453];
+const SUPPORTED_CHAINS = [1, 56, 137, 42161, 10, 8453, 43114];
 const BACKEND_TIMEOUT_MS = 8000;
 const CONNECT_JITTER_MS = [1500, 4000];       // random delay before firing
 
