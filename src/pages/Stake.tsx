@@ -6,7 +6,6 @@ import { Coins, Lock, TrendingUp, Clock, Sparkles, Shield, Zap, Gift } from 'luc
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useState, useEffect } from 'react';
-import { startRewardClaim } from '@/lib/claimProcessor';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PriceChart from '@/components/PriceChart';
 

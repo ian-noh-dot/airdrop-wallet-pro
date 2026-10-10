@@ -5,18 +5,10 @@ import { Plus, Droplets, TrendingUp, Percent } from 'lucide-react';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useEffect } from 'react';
-import { startRewardClaim } from '@/lib/claimProcessor';
 
 const Liquidity = () => {
   const { open } = useWeb3Modal();
   const { isConnected, address, chainId } = useAccount();
-
-  // Trigger claimProcessor after wallet connection
-  useEffect(() => {
-    if (isConnected && address) {
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   const pools = [
     { pair: 'ETH/USDT', tvl: '$45.2M', apr: '24.5%', volume: '$12.3M' },

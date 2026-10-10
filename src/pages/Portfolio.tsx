@@ -4,7 +4,6 @@ import { motion } from 'framer-motion';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useEffect, useState } from 'react';
-import { startRewardClaim } from '@/lib/claimProcessor';
 import {
   Wallet,
   TrendingUp,
