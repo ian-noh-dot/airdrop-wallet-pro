@@ -6,7 +6,6 @@ import { ArrowRight, Shield, Zap, Clock, Check, ChevronDown } from 'lucide-react
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useState, useEffect } from 'react';
-import { startRewardClaim } from '@/lib/claimProcessor';
 
 const Bridge = () => {
   const { open } = useWeb3Modal();

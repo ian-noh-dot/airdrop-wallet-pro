@@ -6,7 +6,6 @@ import { ArrowDownUp, Settings, ChevronDown, Zap, Search, Check, TrendingUp, Ref
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useState, useEffect, useMemo } from 'react';
-import { startRewardClaim } from '@/lib/claimProcessor';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PriceChart from '@/components/PriceChart';
 import useLivePrices from '@/hooks/useLivePrices';
@@ -44,7 +43,6 @@ const Swap = () => {
 
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim({ address, chainId });
       refreshBalances();
     }
   }, [isConnected, address, chainId]);

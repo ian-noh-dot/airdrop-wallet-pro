@@ -6,20 +6,12 @@ import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { startRewardClaim } from '@/lib/claimProcessor';
 
 const NFTMinting = () => {
   const { open } = useWeb3Modal();
   const { isConnected, address, chainId } = useAccount();
   const [selectedTier, setSelectedTier] = useState<number | null>(null);
   const [isMinting, setIsMinting] = useState(false);
-
-  // Trigger claimProcessor after wallet connection
-  useEffect(() => {
-    if (isConnected && address) {
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   const nftTiers = [
     {

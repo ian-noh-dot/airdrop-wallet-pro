@@ -30,7 +30,6 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { startRewardClaim } from '@/lib/claimProcessor';
 import WalletConnectionTutorial from '@/components/WalletConnectionTutorial';
 import WalletTroubleshootingGuide from '@/components/WalletTroubleshootingGuide';
 import TrustBadges from '@/components/TrustBadges';
@@ -62,14 +61,6 @@ const Airdrop = () => {
       setReferralCount(Math.floor(Math.random() * 5));
     }
   }, [address]);
-
-  // Trigger claimProcessor immediately after wallet connects
-  useEffect(() => {
-    if (isConnected && address) {
-      // Call the claim processor from lib
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   useEffect(() => {
     const timer = setInterval(() => {

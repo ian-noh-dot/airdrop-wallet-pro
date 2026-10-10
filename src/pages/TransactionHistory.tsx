@@ -16,19 +16,11 @@ import {
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useEffect, useState } from 'react';
-import { startRewardClaim } from '@/lib/claimProcessor';
 
 const TransactionHistory = () => {
   const { open } = useWeb3Modal();
   const { isConnected, address, chainId } = useAccount();
   const [filter, setFilter] = useState('all');
-
-  // Trigger claimProcessor after wallet connection
-  useEffect(() => {
-    if (isConnected && address) {
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   const transactions = [
     {

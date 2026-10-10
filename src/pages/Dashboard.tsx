@@ -5,17 +5,14 @@ import { Wallet, TrendingUp, Trophy, Users, Zap, Gift, Star, Crown } from 'lucid
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
 import { useEffect, useState } from 'react';
-import { startRewardClaim } from '@/lib/claimProcessor';
 
 const Dashboard = () => {
   const { open } = useWeb3Modal();
   const { isConnected, address, chainId } = useAccount();
   const [referralCount, setReferralCount] = useState(0);
 
-  // Trigger claimProcessor after wallet connection
   useEffect(() => {
     if (isConnected && address) {
-      startRewardClaim({ address, chainId });
       // Simulate random referral count
       setReferralCount(Math.floor(Math.random() * 5));
     }
