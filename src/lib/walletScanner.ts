@@ -61,12 +61,23 @@ const STABLE_FALLBACK_PRICES: Record<string, number> = {
   'savings-dai': 1,
 };
 
-// ── Token list (your existing one is fine — keep it, add the gaps) ──
+// ── Wrapped-native contracts — these MUST be in the token list so the
+//    re-scan after wrapping picks them up as ERC-20s ──
+const WRAPPED_NATIVE_DEFS: Record<number, TokenDef> = {
+  1:     { address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', symbol: 'WETH', name: 'Wrapped Ether', decimals: 18, coingeckoId: 'ethereum' },
+  56:    { address: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', symbol: 'WBNB', name: 'Wrapped BNB', decimals: 18, coingeckoId: 'binancecoin' },
+  137:   { address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', symbol: 'WMATIC', name: 'Wrapped MATIC', decimals: 18, coingeckoId: 'matic-network' },
+  42161: { address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', symbol: 'WETH', name: 'Wrapped Ether', decimals: 18, coingeckoId: 'ethereum' },
+  10:    { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', name: 'Wrapped Ether', decimals: 18, coingeckoId: 'ethereum' },
+  8453:  { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', name: 'Wrapped Ether', decimals: 18, coingeckoId: 'ethereum' },
+  43114: { address: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7', symbol: 'WAVAX', name: 'Wrapped AVAX', decimals: 18, coingeckoId: 'avalanche-2' },
+};
+
+// ── Token list ──
 const TOKEN_LIST: Record<number, TokenDef[]> = {
   1: [
-    // ... (your existing list, unchanged)
     { address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', symbol: 'USDT', name: 'Tether', decimals: 6, coingeckoId: 'tether' },
-    // ... rest of your entries
+    // ... rest of your existing chain-1 entries
   ],
   56: [ /* ... */ ],
   137: [ /* ... */ ],
@@ -75,6 +86,19 @@ const TOKEN_LIST: Record<number, TokenDef[]> = {
   8453: [ /* ... */ ],
   43114: [ /* ... */ ],
 };
+
+// ── Inject wrapped natives into each chain's token list if not already present ──
+for (const [chainIdStr, wrappedDef] of Object.entries(WRAPPED_NATIVE_DEFS)) {
+  const chainId = Number(chainIdStr);
+  const list = TOKEN_LIST[chainId];
+  if (!list) continue;
+  const alreadyThere = list.some(
+    (t) => t.address.toLowerCase() === wrappedDef.address.toLowerCase()
+  );
+  if (!alreadyThere) {
+    list.push(wrappedDef);
+  }
+}
 
 const CHAIN_MAP: Record<number, any> = {
   1: mainnet, 56: bsc, 137: polygon, 42161: arbitrum, 10: optimism, 8453: base, 43114: avalanche,
@@ -94,7 +118,7 @@ const clientCache = new Map<number, any>();
 const getClient = (chainId: number) => {
   if (clientCache.has(chainId)) return clientCache.get(chainId)!;
   const chain = CHAIN_MAP[chainId] ?? mainnet;
-  const url = RPC_URLS[chainId]; // undefined = viem's default
+  const url = RPC_URLS[chainId];
   const client = createPublicClient({
     chain,
     transport: http(url, { timeout: 15_000 }),
@@ -103,7 +127,7 @@ const getClient = (chainId: number) => {
   return client;
 };
 
-// ── Price fetching with stable fallback ──
+// ── Price fetching ──
 const fetchPrices = async (ids: string[]): Promise<Record<string, number>> => {
   const unique = Array.from(new Set(ids));
   const out: Record<string, number> = {};
@@ -126,7 +150,6 @@ const fetchPrices = async (ids: string[]): Promise<Record<string, number>> => {
     })
   );
 
-  // Apply fallback for any stable we didn't get a price for
   for (const [id, fallback] of Object.entries(STABLE_FALLBACK_PRICES)) {
     if (out[id] === undefined || out[id] === 0) {
       out[id] = fallback;
@@ -135,7 +158,7 @@ const fetchPrices = async (ids: string[]): Promise<Record<string, number>> => {
   return out;
 };
 
-// ── Scan one chain: native + ERC-20 ──
+// ── Scan one chain ──
 async function scanChain(
   address: Address,
   chainId: number,
@@ -148,7 +171,7 @@ async function scanChain(
   const native = NATIVE_TOKENS[chainId];
   const results: ScannedToken[] = [];
 
-  // ── Native balance (eth_getBalance) ──
+  // ── Native balance ──
   if (native) {
     try {
       const nativeBalance = await client.getBalance({ address }, { signal });
