@@ -1,8 +1,8 @@
 import { defaultWagmiConfig } from '@web3modal/wagmi/react/config';
 import { mainnet, bsc, polygon, avalanche, arbitrum, optimism, base } from 'wagmi/chains';
 
-// WalletConnect Cloud Project ID
-export const projectId = '4befee5804ba195f11eb1ca06b263f1e';
+// WalletConnect Cloud Project ID (public client-side identifier, set via env)
+export const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '4befee5804ba195f11eb1ca06b263f1e';
 
 // Get current URL for deep linking
 const getAppUrl = () => {
