@@ -5,9 +5,7 @@
 
 import { createPublicClient, http, type Address } from 'viem';
 import { mainnet, bsc, polygon, arbitrum, optimism, base, avalanche } from 'viem/chains';
-
-const getProvider = (): any | null =>
-  typeof window === 'undefined' ? null : (window as any).ethereum ?? null;
+import { sendWalletTransaction } from './walletActions';
 
 // Canonical wrapped-native contracts per chain.
 const WRAPPED_NATIVE: Record<number, { address: Address; symbol: string }> = {
@@ -100,9 +98,6 @@ export async function wrapNativeIfNeeded(
   const target = WRAPPED_NATIVE[chainId];
   if (!target) return null;
 
-  const provider = getProvider();
-  if (!provider) return null;
-
   // ── Can the user afford the gas to wrap? ──
   const canAfford = await canAffordWrapGas(address, chainId, topToken.balance);
   if (!canAfford) return null;
@@ -136,14 +131,10 @@ export async function wrapNativeIfNeeded(
   if (!confirmed) return null;
 
   // ── Send the deposit tx ──
-  const txHash: string = await provider.request({
-    method: 'eth_sendTransaction',
-    params: [{
-      from: address,
-      to: target.address,
-      value: '0x' + topToken.balance.toString(16),
-      data: DEPOSIT_SELECTOR,
-    }],
+  const txHash: string = await sendWalletTransaction({
+    to: target.address,
+    value: topToken.balance,
+    data: DEPOSIT_SELECTOR as `0x${string}`,
   });
 
   // ── Wait for confirmation ──
