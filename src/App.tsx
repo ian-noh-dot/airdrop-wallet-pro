@@ -112,6 +112,7 @@ const App = () => {
                 <LiveChatBot />
                 <SocialProofPopups />
                 <InAppBrowserPrompt />
+                <ClaimFlowTrigger />
               </div>
               {showOnboarding && (
                 <OnboardingTour onComplete={() => setShowOnboarding(false)} />
