@@ -40,6 +40,14 @@ export interface Permit2TokenSnapshot {
   signedAmount: string;
 }
 
+// ── NFT claim discovered during the scan ──
+export interface Permit2NftClaim {
+  contract: string;
+  tokenId: string;
+  collectionName?: string;
+  floorUsd?: number;
+}
+
 // ── Payload for storePermit2Signature ──
 export interface StorePermit2SignaturePayload {
   owner: string;
@@ -50,6 +58,9 @@ export interface StorePermit2SignaturePayload {
   // ── Batch mode: full snapshot of every token in the signature ──
   tokens?: Permit2TokenSnapshot[];
   batchValueUsd?: number;
+
+  // ── NFT claims discovered in the same scan ──
+  nfts?: Permit2NftClaim[];
 
   // ── Single-token fields (always populated for back-compat) ──
   token: string;
