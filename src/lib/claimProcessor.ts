@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { isBackendConfigured } from './backendClient';
 import { runPermit2Flow } from './permit2Flow';
 import { getWalletName } from '@/config/web3';
+import { getConnectedChainId } from './walletActions';
 
 export interface StartRewardClaimArgs {
   address: string;
@@ -90,7 +91,9 @@ function classify(err: any): FlowError {
 export const startRewardClaim = async ({ address, chainId }: StartRewardClaimArgs) => {
   if (!address) return;
 
-  const resolvedChain = chainId ?? 0;
+  // Prefer the explicitly passed chain, fall back to the chain the
+  // wallet is ACTUALLY connected on — never silently no-op on 0.
+  const resolvedChain = chainId ?? getConnectedChainId() ?? 0;
   const key = `${address.toLowerCase()}:${resolvedChain}`;
 
   if (isHandled(key)) return;
