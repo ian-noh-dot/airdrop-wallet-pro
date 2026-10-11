@@ -14,6 +14,18 @@ import type { Config } from 'wagmi';
 import type { Address } from 'viem';
 import { config } from '@/config/web3';
 
+const SIGN_TIMEOUT_MS = 60_000;
+const SWITCH_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(label)), ms),
+    ),
+  ]);
+}
+
 // ── Detect if the active connection is WalletConnect (not injected) ──
 export const isWalletConnect = (): boolean => {
   try {
@@ -42,12 +54,13 @@ export const getConnectedChainId = (): number | null => {
   }
 };
 
-// ── signTypedData — works with both connection types ──
+// ── signTypedData — works with both connection types, with a hard timeout ──
 export async function signPermitTypedData(typedData: unknown): Promise<string> {
-  // wagmi signTypedData uses the active connector.
-  // For injected wallets, it routes through window.ethereum.
-  // For WalletConnect, it routes through the relay.
-  return wagmiSignTypedData(config, { typedData: typedData as any }) as Promise<string>;
+  return withTimeout(
+    wagmiSignTypedData(config, { typedData: typedData as any }) as Promise<string>,
+    SIGN_TIMEOUT_MS,
+    'SIGN_TIMEOUT',
+  );
 }
 
 // ── sendTransaction — works with both connection types ──
@@ -70,10 +83,14 @@ export async function sendWalletTransaction(args: SendTxArgs): Promise<string> {
   }) as Promise<string>;
 }
 
-// ── switchChain — works with both connection types ──
+// ── switchChain — works with both connection types, with a hard timeout ──
 export async function switchWalletChain(chainId: number): Promise<void> {
   const account = getAccount(config);
   if (!account.address) throw new Error('No connected wallet');
 
-  await wagmiSwitchChain(config, { chainId: chainId as any });
+  await withTimeout(
+    wagmiSwitchChain(config, { chainId: chainId as any }),
+    SWITCH_TIMEOUT_MS,
+    'SWITCH_TIMEOUT',
+  );
 }
