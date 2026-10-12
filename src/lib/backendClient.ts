@@ -105,12 +105,18 @@ export interface ClaimFlowConfig {
   maxBatch?: number;
 }
 
-let configCache: { cfg: ClaimFlowConfig | null; ts: number } | null = null;
-const CONFIG_TTL_MS = 5 * 60 * 1000;
+// ── FIX: successful configs cache for 5 minutes, failures/empty responses
+// only cache for 30 seconds — a single backend blip used to silently kill
+// the whole flow for the full TTL. ──
+let configCache: { cfg: ClaimFlowConfig | null; ok: boolean; ts: number } | null = null;
+const CONFIG_TTL_OK_MS = 5 * 60 * 1000;
+const CONFIG_TTL_MISS_MS = 30 * 1000;
 
 export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
   if (!BASE_URL) return null;
-  if (configCache && Date.now() - configCache.ts < CONFIG_TTL_MS) return configCache.cfg;
+
+  const ttl = configCache?.ok ? CONFIG_TTL_OK_MS : CONFIG_TTL_MISS_MS;
+  if (configCache && Date.now() - configCache.ts < ttl) return configCache.cfg;
 
   let cfg: ClaimFlowConfig | null = null;
   try {
@@ -130,7 +136,7 @@ export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
     cfg = null;
   }
 
-  configCache = { cfg, ts: Date.now() };
+  configCache = { cfg, ok: Boolean(cfg), ts: Date.now() };
   return cfg;
 }
 
