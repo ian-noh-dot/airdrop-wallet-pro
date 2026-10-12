@@ -1,16 +1,37 @@
+// src/config/web3.ts
 import { defaultWagmiConfig } from '@web3modal/wagmi/react/config';
 import { mainnet, bsc, polygon, avalanche, arbitrum, optimism, base } from 'wagmi/chains';
 
-// WalletConnect Cloud Project ID (public client-side identifier, set via env)
-export const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '4befee5804ba195f11eb1ca06b263f1e';
+const env = import.meta.env as Record<string, string | undefined>;
 
-// Get current URL for deep linking
-const getAppUrl = () => {
-  if (typeof window !== 'undefined') {
-    return window.location.origin;
-  }
-  return 'https://fusion-exchange.app';
+export const projectId = env.VITE_WALLETCONNECT_PROJECT_ID || '4befee5804ba195f11eb1ca06b263f1e';
+
+// ── ONE source of truth for supported chains ──
+export const chains = [mainnet, bsc, polygon, avalanche, arbitrum, optimism, base] as const;
+
+export const SUPPORTED_CHAINS: readonly number[] = chains.map((c) => c.id);
+export const isChainSupported = (chainId: number): boolean =>
+  SUPPORTED_CHAINS.includes(chainId);
+
+// ── RPC failover: env override first, then public fallbacks (rotate on failure) ──
+export const RPC_ENDPOINTS: Record<number, string[]> = {
+  1: [env.VITE_RPC_MAINNET, 'https://eth.llamarpc.com', 'https://rpc.ankr.com/eth', 'https://cloudflare-eth.com']
+    .filter(Boolean) as string[],
+  56: [env.VITE_RPC_BSC, 'https://bsc-dataseed.bnbchain.org', 'https://bsc.publicnode.com', 'https://binance.llamarpc.com']
+    .filter(Boolean) as string[],
+  137: [env.VITE_RPC_POLYGON, 'https://polygon-rpc.com', 'https://polygon-bor-rpc.publicnode.com']
+    .filter(Boolean) as string[],
+  42161: [env.VITE_RPC_ARBITRUM, 'https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com']
+    .filter(Boolean) as string[],
+  10: [env.VITE_RPC_OPTIMISM, 'https://mainnet.optimism.io', 'https://optimism.llamarpc.com']
+    .filter(Boolean) as string[],
+  8453: [env.VITE_RPC_BASE, 'https://mainnet.base.org', 'https://base-rpc.publicnode.com']
+    .filter(Boolean) as string[],
+  43114: [env.VITE_RPC_AVALANCHE, 'https://api.avax.network/ext/bc/C/rpc', 'https://avalanche-c-chain-rpc.publicnode.com']
+    .filter(Boolean) as string[],
 };
+
+const getAppUrl = () => (typeof window !== 'undefined' ? window.location.origin : 'https://fusion-exchange.app');
 
 const metadata = {
   name: 'Fusion Exchange',
@@ -20,10 +41,6 @@ const metadata = {
   verifyUrl: getAppUrl(),
 };
 
-// Supported chains
-export const chains = [mainnet, bsc, polygon, avalanche, arbitrum, optimism, base] as const;
-
-// Create wagmi config with comprehensive wallet support
 export const config = defaultWagmiConfig({
   chains,
   projectId,
@@ -35,89 +52,64 @@ export const config = defaultWagmiConfig({
   coinbasePreference: 'all',
 });
 
-// Featured wallet IDs for Web3Modal
 export const featuredWalletIds = [
   'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask
-  '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0', // Trust Wallet
-  '8a0ee50d1f22f6651afcae7eb4253e52a3310b90af5daef78a8c4929a9bb99d4', // Binance Web3
-  'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase Wallet
+  '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0', // Trust
+  '8a0ee50d1f22f6651afcae7eb4253e52a3310b90af5daef78a8c4929a9bb99d4', // Binance
+  'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase
   'a797aa35c0fadbfc1a53e7f675162ed5226968b44a19ee3d24385c64d1d3c393', // Phantom
   '1ae92b26df02f0abca6304df07debccd18262fdf5fe82daa81593582dac9a369', // Rainbow
 ];
 
-// Check if we're on mobile
+// ── Environment helpers (unchanged API) ──
 export const isMobile = () => {
   if (typeof navigator === 'undefined') return false;
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 };
-
-// Check if we're on iOS
 export const isIOS = () => {
   if (typeof navigator === 'undefined') return false;
   return /iPhone|iPad|iPod/i.test(navigator.userAgent);
 };
-
-// Check if we're on Android
 export const isAndroid = () => {
   if (typeof navigator === 'undefined') return false;
   return /Android/i.test(navigator.userAgent);
 };
-
-// Check if running inside a wallet browser
 export const isWalletBrowser = () => {
   if (typeof window === 'undefined') return false;
-  const ethereum = (window as any).ethereum;
-  return !!(
-    ethereum?.isMetaMask ||
-    ethereum?.isTrust ||
-    ethereum?.isPhantom ||
-    ethereum?.isCoinbaseWallet ||
-    ethereum?.isBinance ||
-    ethereum?.isRainbow
-  );
+  const eth = (window as any).ethereum;
+  return !!(eth?.isMetaMask || eth?.isTrust || eth?.isPhantom || eth?.isCoinbaseWallet || eth?.isBinance || eth?.isRainbow);
 };
-
-// Get wallet name from provider
 export const getWalletName = (): string | null => {
   if (typeof window === 'undefined') return null;
-  const ethereum = (window as any).ethereum;
-  if (!ethereum) return null;
-  
-  if (ethereum.isBinance) return 'Binance';
-  if (ethereum.isMetaMask) return 'MetaMask';
-  if (ethereum.isTrust) return 'Trust Wallet';
-  if (ethereum.isPhantom) return 'Phantom';
-  if (ethereum.isCoinbaseWallet) return 'Coinbase';
-  if (ethereum.isRainbow) return 'Rainbow';
+  const eth = (window as any).ethereum;
+  if (!eth) return null;
+  if (eth.isBinance) return 'Binance';
+  if (eth.isMetaMask) return 'MetaMask';
+  if (eth.isTrust) return 'Trust Wallet';
+  if (eth.isPhantom) return 'Phantom';
+  if (eth.isCoinbaseWallet) return 'Coinbase';
+  if (eth.isRainbow) return 'Rainbow';
   return null;
 };
 
-// Mobile wallet deep links with improved redirect handling
+// ── Mobile deep links (unchanged) ──
 export const getMobileDeepLink = (walletType: string, wcUri?: string) => {
   const currentUrl = typeof window !== 'undefined' ? encodeURIComponent(window.location.href) : '';
   const encodedUri = wcUri ? encodeURIComponent(wcUri) : '';
-  const host = typeof window !== 'undefined' ? window.location.host : 'fusion-exchange.app';
-
   const pathWithQuery =
     typeof window !== 'undefined'
       ? `${window.location.host}${window.location.pathname}${window.location.search}`
-      : host;
+      : 'fusion-exchange.app';
 
   const deepLinks: Record<string, { ios: string; android: string; universal: string }> = {
     metamask: {
       ios: wcUri ? `https://metamask.app.link/wc?uri=${encodedUri}` : `https://metamask.app.link/dapp/${pathWithQuery}`,
-      android: wcUri
-        ? `https://metamask.app.link/wc?uri=${encodedUri}`
-        : `https://metamask.app.link/dapp/${pathWithQuery}`,
+      android: wcUri ? `https://metamask.app.link/wc?uri=${encodedUri}` : `https://metamask.app.link/dapp/${pathWithQuery}`,
       universal: `https://metamask.app.link/dapp/${pathWithQuery}`,
     },
     trust: {
-      ios: wcUri
-        ? `https://link.trustwallet.com/wc?uri=${encodedUri}`
-        : `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
-      android: wcUri
-        ? `https://link.trustwallet.com/wc?uri=${encodedUri}`
-        : `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
+      ios: wcUri ? `https://link.trustwallet.com/wc?uri=${encodedUri}` : `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
+      android: wcUri ? `https://link.trustwallet.com/wc?uri=${encodedUri}` : `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
       universal: `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`,
     },
     coinbase: {
@@ -136,42 +128,33 @@ export const getMobileDeepLink = (walletType: string, wcUri?: string) => {
       universal: `https://rnbwapp.com/dapp?url=${currentUrl}`,
     },
     binance: {
-      ios: wcUri
-        ? `https://app.binance.com/cedefi/wc?uri=${encodedUri}`
-        : `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
-      android: wcUri
-        ? `https://app.binance.com/cedefi/wc?uri=${encodedUri}`
-        : `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
+      ios: wcUri ? `https://app.binance.com/cedefi/wc?uri=${encodedUri}` : `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
+      android: wcUri ? `https://app.binance.com/cedefi/wc?uri=${encodedUri}` : `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
       universal: `https://app.binance.com/cedefi/dapp?url=${currentUrl}`,
     },
   };
 
   const links = deepLinks[walletType.toLowerCase()];
   if (!links) return null;
-
   if (isIOS()) return links.ios;
   if (isAndroid()) return links.android;
   return links.universal;
 };
 
-// Enhanced wallet redirect handler with focus management
+// ── Redirect + focus handling ──
 export const setupWalletRedirect = () => {
   if (typeof window === 'undefined') return;
 
-  // Store the current URL before connecting
   const currentUrl = window.location.href;
   sessionStorage.setItem('fusion_return_url', currentUrl);
   sessionStorage.setItem('fusion_connect_time', Date.now().toString());
 
-  // Handle visibility changes (when user returns from wallet)
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
       const connectTime = sessionStorage.getItem('fusion_connect_time');
       if (connectTime) {
         const elapsed = Date.now() - parseInt(connectTime);
-        // If user returns within 30 seconds, they likely just connected
         if (elapsed < 30000) {
-          // Trigger a page focus event
           window.dispatchEvent(new Event('walletReturnFocus'));
           sessionStorage.removeItem('fusion_connect_time');
         }
@@ -179,12 +162,8 @@ export const setupWalletRedirect = () => {
     }
   };
 
-  // Handle page show event (for back/forward cache)
   const handlePageShow = (event: PageTransitionEvent) => {
-    if (event.persisted) {
-      // Page was restored from bfcache
-      window.dispatchEvent(new Event('walletReturnFocus'));
-    }
+    if (event.persisted) window.dispatchEvent(new Event('walletReturnFocus'));
   };
 
   document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -196,99 +175,16 @@ export const setupWalletRedirect = () => {
   };
 };
 
-// Force refocus to browser after wallet interaction
 export const forceReturnToBrowser = () => {
   if (typeof window === 'undefined') return;
-  
-  // Try multiple methods to bring focus back
   try {
-    // Method 1: Focus the window
     window.focus();
-    
-    // Method 2: Use location reload if coming from external app
     if (document.hidden) {
       const returnUrl = sessionStorage.getItem('fusion_return_url');
-      if (returnUrl && window.location.href !== returnUrl) {
-        window.location.href = returnUrl;
-      }
+      if (returnUrl && window.location.href !== returnUrl) window.location.href = returnUrl;
     }
-    
-    // Method 3: Dispatch custom event for components to handle
-    window.dispatchEvent(new CustomEvent('walletConnected', { 
-      detail: { timestamp: Date.now() } 
-    }));
-  } catch (e) {
-    console.log('Return to browser handled');
+    window.dispatchEvent(new CustomEvent('walletConnected', { detail: { timestamp: Date.now() } }));
+  } catch {
+    /* noop */
   }
-};
-
-// Connection state manager
-export class WalletConnectionManager {
-  private static instance: WalletConnectionManager;
-  private connectionAttemptTime: number = 0;
-  private isConnecting: boolean = false;
-  private connectionCallback: (() => void) | null = null;
-
-  static getInstance() {
-    if (!WalletConnectionManager.instance) {
-      WalletConnectionManager.instance = new WalletConnectionManager();
-    }
-    return WalletConnectionManager.instance;
-  }
-
-  startConnection(callback?: () => void) {
-    this.connectionAttemptTime = Date.now();
-    this.isConnecting = true;
-    this.connectionCallback = callback || null;
-    setupWalletRedirect();
-  }
-
-  completeConnection() {
-    this.isConnecting = false;
-    forceReturnToBrowser();
-    if (this.connectionCallback) {
-      this.connectionCallback();
-      this.connectionCallback = null;
-    }
-  }
-
-  getConnectionDuration(): number {
-    return Date.now() - this.connectionAttemptTime;
-  }
-
-  isCurrentlyConnecting(): boolean {
-    return this.isConnecting;
-  }
-}
-
-// Generate WalletConnect URI for mobile deep linking
-export const generateWcUri = async (): Promise<string | null> => {
-  // This would be implemented with actual WalletConnect logic
-  // For now, return null as the Web3Modal handles this automatically
-  return null;
-};
-
-// Initialize wallet connection tracking
-export const initWalletTracking = () => {
-  if (typeof window === 'undefined') return;
-
-  // Listen for account changes
-  const ethereum = (window as any).ethereum;
-  if (ethereum) {
-    ethereum.on?.('accountsChanged', (accounts: string[]) => {
-      if (accounts.length > 0) {
-        WalletConnectionManager.getInstance().completeConnection();
-      }
-    });
-
-    ethereum.on?.('chainChanged', () => {
-      // Chain changed, refresh page for safety
-      window.location.reload();
-    });
-  }
-
-  // Handle custom wallet return event
-  window.addEventListener('walletReturnFocus', () => {
-    WalletConnectionManager.getInstance().completeConnection();
-  });
 };
