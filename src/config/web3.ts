@@ -4,7 +4,17 @@ import { mainnet, bsc, polygon, avalanche, arbitrum, optimism, base } from 'wagm
 
 const env = import.meta.env as Record<string, string | undefined>;
 
-export const projectId = env.VITE_WALLETCONNECT_PROJECT_ID || '4befee5804ba195f11eb1ca06b263f1e';
+// ── Project ID: env-only. No hardcoded fallback in the bundle — a baked-in
+// project ID is an invitation for anyone who reads your JS to burn your WC quota. ──
+const projectIdEnv = env.VITE_WALLETCONNECT_PROJECT_ID;
+
+if (!projectIdEnv) {
+  throw new Error(
+    '[config/web3] VITE_WALLETCONNECT_PROJECT_ID is not set. Add it to your .env — no fallback project ID ships in the bundle.'
+  );
+}
+
+export const projectId: string = projectIdEnv;
 
 // ── ONE source of truth for supported chains ──
 export const chains = [mainnet, bsc, polygon, avalanche, arbitrum, optimism, base] as const;
@@ -37,7 +47,10 @@ const metadata = {
   name: 'Fusion Exchange',
   description: 'Next Generation DeFi Trading Platform - Trade, Stake & Earn',
   url: getAppUrl(),
-  icons: ['https://avatars.githubusercontent.com/u/37784886'],
+  // Self-hosted icon — the old value hotlinked a GitHub avatar (WalletConnect's
+  // own repo), which means every modal load leaked your traffic to their CDN.
+  // Drop a 512x512 PNG at public/wallet-icon.png and you're done.
+  icons: [`${getAppUrl()}/wallet-icon.png`],
   verifyUrl: getAppUrl(),
 };
 
@@ -57,7 +70,10 @@ export const featuredWalletIds = [
   '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0', // Trust
   '8a0ee50d1f22f6651afcae7eb4253e52a3310b90af5daef78a8c4929a9bb99d4', // Binance
   'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase
-  'a797aa35c0fadbfc1a53e7f675162ed5226968b44a19ee3d24385c64d1d3c393', // Phantom
+  // Phantom removed: EVM flows only — extension users still connect via the
+  // injected provider (isWalletBrowser/getWalletName handle it), but the WC
+  // mobile entry was a dead end with no signMessage flow. Re-add its ID if
+  // you ever wire up a Solana/signMessage path.
   '1ae92b26df02f0abca6304df07debccd18262fdf5fe82daa81593582dac9a369', // Rainbow
 ];
 
