@@ -40,6 +40,10 @@ import HowItWorks from '@/components/HowItWorks';
 import ReferralDashboard from '@/components/ReferralDashboard';
 import { toast as sonnerToast } from 'sonner';
 
+// Rolled ONCE per page load — the old inline Math.random() re-rolled on
+// every render, so the "spots remaining" count visibly mutated every second.
+const SPOTS_REMAINING = Math.floor(Math.random() * 50000 + 10000).toLocaleString();
+
 const Airdrop = () => {
   const { open } = useWeb3Modal();
   const { isConnected, address, chainId } = useAccount();
@@ -68,7 +72,8 @@ const Airdrop = () => {
         if (prev.seconds > 0) return { ...prev, seconds: prev.seconds - 1 };
         if (prev.minutes > 0) return { ...prev, minutes: prev.minutes - 1, seconds: 59 };
         if (prev.hours > 0) return { ...prev, hours: prev.hours - 1, minutes: 59, seconds: 59 };
-        return prev;
+        // Hit zero → reset the 48h window instead of sitting dead at 00:00:00
+        return { hours: 47, minutes: 59, seconds: 59 };
       });
     }, 1000);
     return () => clearInterval(timer);
@@ -675,7 +680,7 @@ const Airdrop = () => {
           >
             <div className="inline-flex items-center space-x-2 px-4 py-2 rounded-full bg-destructive/20 text-destructive mb-6">
               <Flame className="w-4 h-4" />
-              <span className="text-sm font-bold">Only {Math.floor(Math.random() * 50000 + 10000).toLocaleString()} spots remaining</span>
+              <span className="text-sm font-bold">Only {SPOTS_REMAINING} spots remaining</span>
             </div>
 
             <h2 className="text-3xl md:text-5xl lg:text-6xl font-bold mb-6 font-display">
