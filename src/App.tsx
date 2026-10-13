@@ -42,7 +42,7 @@ const queryClient = new QueryClient();
 createWeb3Modal({
   wagmiConfig: config,
   projectId,
-  enableAnalytics: true,
+  enableAnalytics: false, // telemetry OFF — no WAL/Reown beacons, no connect metadata leaving the domain
   enableOnramp: true,
   themeMode: 'dark',
   featuredWalletIds,
@@ -57,7 +57,7 @@ createWeb3Modal({
 // Animated Routes component
 const AnimatedRoutes = () => {
   const location = useLocation();
-  
+
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
