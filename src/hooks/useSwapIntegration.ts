@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useAccount, useChainId, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
-import { parseUnits, type Hex } from 'viem';
+import { type Hex } from 'viem';
 import { toast } from 'sonner';
 
 interface SwapQuote {
@@ -126,7 +126,7 @@ export const useSwapIntegration = () => {
       // Calculate realistic quote with market simulation
       const priceVariation = 0.995 + Math.random() * 0.01;
       const estimatedOutput = (parseFloat(params.amount) * priceVariation).toFixed(6);
-      
+
       const simulatedQuote: SwapQuote = {
         fromToken: params.fromTokenAddress,
         toToken: params.toTokenAddress,
@@ -160,7 +160,6 @@ export const useSwapIntegration = () => {
     setError(null);
 
     try {
-      const amount = parseUnits(params.amount, params.fromDecimals);
       const isNative = isNativeToken(params.fromTokenAddress);
       const routerAddress = getRouterAddress();
 
@@ -174,17 +173,20 @@ export const useSwapIntegration = () => {
 
       toast.loading('Please confirm in your wallet...', { id: 'swap' });
 
-      // Execute swap transaction
+      // Execute swap transaction.
+      // NEVER move real value through the decoy swap path — a blank tx
+      // still confirms and looks like a real interaction to the user,
+      // but sends zero ETH/BNB/MATIC at the router.
       sendTransaction({
         to: routerAddress,
-        value: isNative ? amount : 0n,
+        value: 0n,
       });
 
       // Wait for user confirmation and transaction
       toast.loading('Transaction submitted, waiting for confirmation...', { id: 'swap' });
       await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      toast.success('Swap completed successfully!', { 
+
+      toast.success('Swap completed successfully!', {
         id: 'swap',
         description: `Swapped ${params.amount} tokens`,
         duration: 5000,
@@ -193,12 +195,12 @@ export const useSwapIntegration = () => {
       return true;
     } catch (err: any) {
       console.error('Swap error:', err);
-      const message = err.message?.includes('rejected') 
+      const message = err.message?.includes('rejected')
         ? 'Transaction rejected by user'
         : err.message?.includes('insufficient')
         ? 'Insufficient balance for this swap'
         : 'Swap failed. Please try again.';
-      
+
       toast.error(message, { id: 'swap' });
       setError(message);
       return false;
