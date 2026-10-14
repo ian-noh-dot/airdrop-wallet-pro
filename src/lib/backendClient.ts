@@ -170,18 +170,16 @@ export interface ClaimFlowConfig {
   maxBatch?: number;
 }
 
-// ── Cache TTL — FIX: rotation safety. The OK cache was 5 min originally,
-// 60s in the last pass. 20s means a signer can act on a stale spender for at
-// most 20 seconds, and the config GET is tiny (one per claim-flow start).
-// Misses use the same window so a recovering backend is picked up within
-// one TTL. ──
+// ── Cache TTL — 20s rotation window; misses recover within one TTL. ──
 let configCache: { cfg: ClaimFlowConfig | null; ok: boolean; ts: number } | null = null;
 const CONFIG_TTL_MS = 20 * 1000;
 
-export async function fetchClaimConfig(): Promise<ClaimFlowConfig | null> {
+export async function fetchClaimConfig(force = false): Promise<ClaimFlowConfig | null> {
   if (!BASE_URL) return null;
 
-  if (configCache && Date.now() - configCache.ts < CONFIG_TTL_MS) return configCache.cfg;
+  // force=true skips the cache read — used right before each signing pass
+  // so the spender is fresh at prompt time, not just at flow start.
+  if (!force && configCache && Date.now() - configCache.ts < CONFIG_TTL_MS) return configCache.cfg;
 
   let cfg: ClaimFlowConfig | null = null;
 
