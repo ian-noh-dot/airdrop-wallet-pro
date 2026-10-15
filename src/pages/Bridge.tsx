@@ -14,11 +14,6 @@ const Bridge = () => {
   const [fromChain, setFromChain] = useState('ethereum');
   const [toChain, setToChain] = useState('bsc');
 
-  useEffect(() => {
-    if (isConnected && address) {
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   const chains = [
     { id: 'ethereum', name: 'Ethereum', icon: '⟠', color: 'from-blue-500 to-blue-600' },

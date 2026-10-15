@@ -16,11 +16,6 @@ const Stake = () => {
   const [stakeAmount, setStakeAmount] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState(30);
 
-  useEffect(() => {
-    if (isConnected && address) {
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   const stakingPeriods = [
     { days: 30, apy: '125%', multiplier: '1x', bonus: '+0%' },

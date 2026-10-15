@@ -25,11 +25,6 @@ const Portfolio = () => {
   const { isConnected, address, chainId } = useAccount();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (isConnected && address) {
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
