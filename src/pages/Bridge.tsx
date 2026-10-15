@@ -5,11 +5,11 @@ import { motion } from 'framer-motion';
 import { ArrowRight, Shield, Zap, Clock, Check, ChevronDown } from 'lucide-react';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 const Bridge = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address, chainId } = useAccount();
+  const { isConnected } = useAccount();
   const [amount, setAmount] = useState('');
   const [fromChain, setFromChain] = useState('ethereum');
   const [toChain, setToChain] = useState('bsc');

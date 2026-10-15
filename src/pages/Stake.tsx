@@ -5,13 +5,13 @@ import { motion } from 'framer-motion';
 import { Coins, Lock, TrendingUp, Clock, Sparkles, Shield, Zap, Gift } from 'lucide-react';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PriceChart from '@/components/PriceChart';
 
 const Stake = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address, chainId } = useAccount();
+  const { isConnected } = useAccount();
   const { t } = useLanguage();
   const [stakeAmount, setStakeAmount] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState(30);
