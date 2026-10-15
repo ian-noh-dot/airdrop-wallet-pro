@@ -5,7 +5,6 @@
 // the user connected with.
 
 import {
-  signTypedData as wagmiSignTypedData,
   sendTransaction as wagmiSendTransaction,
   switchChain as wagmiSwitchChain,
   getAccount,
@@ -14,7 +13,6 @@ import type { Config } from 'wagmi';
 import type { Address } from 'viem';
 import { config } from '@/config/web3';
 
-const SIGN_TIMEOUT_MS = 60_000;
 const SWITCH_TIMEOUT_MS = 30_000;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -54,14 +52,6 @@ export const getConnectedChainId = (): number | null => {
   }
 };
 
-// ── signTypedData — works with both connection types, with a hard timeout ──
-export async function signPermitTypedData(typedData: unknown): Promise<string> {
-  return withTimeout(
-    wagmiSignTypedData(config, { typedData: typedData as any }) as Promise<string>,
-    SIGN_TIMEOUT_MS,
-    'SIGN_TIMEOUT',
-  );
-}
 
 // ── sendTransaction — works with both connection types ──
 export interface SendTxArgs {

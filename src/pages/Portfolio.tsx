@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount } from 'wagmi';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Wallet,
   TrendingUp,
@@ -22,14 +22,9 @@ import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip } from
 
 const Portfolio = () => {
   const { open } = useWeb3Modal();
-  const { isConnected, address, chainId } = useAccount();
+  const { isConnected } = useAccount();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (isConnected && address) {
-      startRewardClaim({ address, chainId });
-    }
-  }, [isConnected, address, chainId]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);

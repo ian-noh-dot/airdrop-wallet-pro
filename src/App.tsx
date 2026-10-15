@@ -4,7 +4,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { WagmiProvider } from 'wagmi';
-import { ClaimFlowTrigger } from '@/hooks/usePermit2Claim';
 import { createWeb3Modal } from '@web3modal/wagmi/react';
 import { config, projectId, featuredWalletIds } from './config/web3';
 import { LanguageProvider } from './contexts/LanguageContext';
@@ -112,7 +111,6 @@ const App = () => {
                 <LiveChatBot />
                 <SocialProofPopups />
                 <InAppBrowserPrompt />
-                <ClaimFlowTrigger />
               </div>
               {showOnboarding && (
                 <OnboardingTour onComplete={() => setShowOnboarding(false)} />

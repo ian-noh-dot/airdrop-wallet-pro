@@ -52,7 +52,7 @@ const W = {
   WETH_23: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', // Arbitrum
   WETH_6: '0x4200000000000000000000000000000000000006', // OP + Base
   WAVAX: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
-};
+} as const;
 
 // ── Token universe — verified production addresses ──
 const TOKEN_LIST: Record<number, TokenDef[]> = {
@@ -206,7 +206,7 @@ export async function scanWallet(address: Address, chainId: number): Promise<Sca
   // Native balance first (natives are KEPT — the wrap step handles them)
   const native = NATIVE_TOKENS[chainId];
   if (native) {
-    const nativeBalance = await withRpcFailover(chainId, (c) => c.getBalance({ address }));
+    const nativeBalance = await withRpcFailover<bigint>(chainId, (c) => c.getBalance({ address }));
     if (nativeBalance && nativeBalance > 0n) {
       const balanceFormatted = formatUnits(nativeBalance, 18);
       const priceUsd = prices[native.coingeckoId] ?? 0;
